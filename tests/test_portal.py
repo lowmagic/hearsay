@@ -275,7 +275,23 @@ def test_people_heard_at_a_cluster_s_place_are_offered_for_one_tap(portal):
     assert "Heard at Blind Monk" in page and "name='suggested' value='Peggy'" in page
     client.post(f"/cluster/{cluster_a}", data={"suggested": "Peggy"})
     record = json.loads((labels_dir / "tags.jsonl").read_text().splitlines()[-1])
-    assert (record["name"], record["via"], record["offered"]) == ("Peggy", "place", ["Peggy"])  # counted (hearsay/hints.py)
+    assert (record["name"], record["via"], record["offered"]["place"]) == ("Peggy", "place", ["Peggy"])  # counted (hearsay/hints.py)
+
+
+def test_an_unnamed_cluster_offers_the_voices_it_sounds_most_like(portal):
+    client, db_path, labels_dir = portal
+    log_in(client)
+    db = sqlite3.connect(db_path)
+    cluster_a = db.execute("SELECT cluster FROM turn_people WHERE turn_id = 'a0'").fetchone()[0]
+    db.execute("INSERT INTO cluster_voices VALUES (?, 'Peggy', 0.33)", (cluster_a,))  # as reprocess finds it
+    db.commit()
+    db.close()
+
+    page = client.get(f"/cluster/{cluster_a}").text
+    assert "Sounds most like" in page and "name='voice' value='Peggy'" in page
+    client.post(f"/cluster/{cluster_a}", data={"voice": "Peggy"})
+    record = json.loads((labels_dir / "tags.jsonl").read_text().splitlines()[-1])
+    assert (record["name"], record["via"], record["offered"]["voice"]) == ("Peggy", "voice", ["Peggy"])
 
 
 def test_a_cluster_that_sounds_like_tagged_media_offers_media_for_one_tap(portal):

@@ -10,10 +10,10 @@ def tag(at: str, name: str, turn: str, **extra) -> dict:
 
 def test_hints_taken_passed_over_wrong_and_undone():
     tags = [
-        tag("10:00:00", "Peggy", "t1", via="place", offered=["Peggy", "Olivia"]),
-        tag("10:00:20", "Olivia", "t2", offered=["Peggy", "Olivia"]),  # typed though offered; talking over Peggy
-        tag("10:00:50", "Trent", "t3", offered=["Peggy"]),  # not among those offered
-        tag("10:01:00", "_media", "t4", via="media", offered=["_media"]),
+        tag("10:00:00", "Peggy", "t1", via="place", offered={"place": ["Peggy", "Olivia"]}),
+        tag("10:00:20", "Olivia", "t2", offered={"place": ["Peggy", "Olivia"]}),  # typed though offered; talking over Peggy
+        tag("10:00:50", "Trent", "t3", offered={"place": ["Peggy"]}),  # not among those offered
+        tag("10:01:00", "_media", "t4", via="media", offered={"media": ["_media"]}),
         tag("10:01:30", "Victor", "t1"),  # Peggy's turn was someone else: undone
         {"type": "name", "name": "Old", "at": [], "tagged_at": "2026-10-01T10:00:00+00:00"},  # before the hints
     ]
