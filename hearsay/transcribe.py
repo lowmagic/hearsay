@@ -2,7 +2,7 @@
 transcripts back to the NAS.
 
 Runs on the dev box, not the NAS, because only the dev box has a GPU
-(install/gpu.sh sets up the environment and an hourly systemd timer). Audio
+(install/gpu.sh sets up the environment and its kind on corral). Audio
 moves from the NAS to the dev box, both inside Hearsay's boundary, and is only
 kept in a temp dir while it's transcribed.
 
