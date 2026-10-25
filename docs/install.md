@@ -8,6 +8,12 @@ to do between them. For what Hearsay is, see the [README](../README.md).
 Each script is idempotent and walks you through any step that needs you.
 Secrets are kept in env files outside the repo.
 
+The pipeline runs on [corral](https://github.com/junglestyle/corral), set up
+from its own repo first: its server on the NAS, a NAS worker offering `nas`
+from `/mnt/fast/corral` (corral's `examples/system-worker.sh`), and a user
+worker offering `gpu` on the dev box. `nas.sh` and `gpu.sh` add Hearsay's
+kinds to those workers and check they're running.
+
 1. **Dev box (optional):** [`install/dev.sh`](../install/dev.sh) sets up a venv, a dev secret in
    `~/.config/hearsay/dev.env`, and runs the tests.
 2. **NAS (TrueNAS SCALE 25.04+):** clone the repo as `admin` into the
@@ -25,9 +31,10 @@ Secrets are kept in env files outside the repo.
    app in the TrueNAS UI). Before you run it, the Apps pool must be set in
    the TrueNAS UI. The script checks this and tells you if it isn't.
 3. **Dev box with the GPU, as your user:** [`install/gpu.sh`](../install/gpu.sh)
-   sets up transcription (Parakeet, pyannote) and an hourly timer that pulls new WAVs
-   from the NAS over `ssh nas` and writes transcripts back. It asks for a
-   Hugging Face token for the gated diarization model. Then reprocess again.
+   sets up transcription (Parakeet, pyannote) as a kind on the dev box's
+   corral worker, which pulls new WAVs from the NAS over `ssh nas` and writes
+   transcripts back. It asks for a Hugging Face token for the gated
+   diarization model, and transcribes everything pending once.
 
 4. **iPhone, from the Mac, as your user (replaces Omi's app and cloud as
    the audio path):** [`install/ios.sh`](../install/ios.sh) builds the pendant
@@ -47,7 +54,7 @@ NAS, `install/gpu.sh` on the dev box, and `install/ios.sh` and
 `install/mac.sh` on the Mac, in that order: the NAS must read a new kind of
 upload record before the phone or Mac sends it. The dev box runs
 `hearsay/transcribe.py` from its checkout, so its `git pull` takes effect at
-the next timer run. With a
+the next transcription. With a
 free Apple ID the phone's install expires after 7 days; re-running
 `install/ios.sh` renews it.
 
@@ -125,23 +132,34 @@ whenever the upload format changes.
 
 ## Reprocessing
 
-Everything derived from raw is rebuilt hourly at :30 by a TrueNAS cron job
-that `nas.sh` sets up (log: `journalctl -t hearsay-reprocess`; the portal
-and capture receiver log to the journal too, e.g.
-`journalctl CONTAINER_NAME=hearsay-capture`).
+Everything derived from raw is rebuilt by reprocess, which corral's NAS
+worker runs (log: `journalctl -t hearsay-reprocess`; the portal and capture
+receiver log to the journal too, e.g.
+`journalctl CONTAINER_NAME=hearsay-capture`). After each upload the capture
+receiver enqueues the pipeline ([`hearsay/enqueue.py`](../hearsay/enqueue.py)):
+reprocess to assemble the new audio into WAVs, transcription on the dev box,
+reprocess again to turn the transcripts into turns, then Idea Machine. A
+TrueNAS cron job enqueues the same chain hourly at :30, for uploads that
+couldn't reach corral (log: `journalctl -t hearsay-enqueue`).
 Conversations are found in the audio stream itself (voice detection; a
-conversation ends after 3 minutes of silence), not taken from Omi. Transcripts
-come from the dev box's timer at :00, so new audio flows WAV, then transcript,
-then turns within about an hour, with nothing to run by hand. Each run builds
+conversation ends after 3 minutes of silence), not taken from Omi. New audio
+flows WAV, then transcript, then turns as soon as each machine is free, with
+nothing to run by hand; `corral pause` on the dev box's worker holds
+transcription while you use its GPU. Each run builds
 a complete new database from raw in memory, then updates the real one in a
 single transaction that writes only the rows that changed, so readers never
 see a half-built database and a run with nothing new writes almost nothing
 (`fast` is snapshotted nightly). Slow steps are cached by audio content in
 `db/cache.sqlite`.
 
-To run it now instead of waiting, on the NAS (and on the dev box,
-`systemctl --user start hearsay-transcribe`). The lock is the cron job's, so
-this waits for a run in progress.
+To run the whole pipeline now, enqueue it on the NAS:
+
+```sh
+sudo docker exec hearsay-capture python -m hearsay.enqueue
+```
+
+To run only a reprocess, by hand, on the NAS. The lock is the worker's too,
+so this waits for a run in progress, and a queued one waits for this.
 
 ```sh
 sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay/install/compose.yaml run --rm reprocess
@@ -193,7 +211,7 @@ as a command with
 ## Reading the utterance stream (consumers)
 
 `/mnt/fast/hearsay/stream/` (readable by the `apps` group) holds Hearsay's
-output, rewritten after every hourly reprocess:
+output, rewritten after every reprocess:
 
 - `index.json`: every conversation with start, end, `open` (still going when
   the audio stopped), `transcribed`, `taps` (times the owner marked it with

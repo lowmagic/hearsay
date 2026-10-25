@@ -46,7 +46,10 @@ services:
     container_name: hearsay-capture
     logging: *logging
     user: "568:568"
-    env_file: /mnt/fast/hearsay/config/capture.env
+    # corral.env: after each upload it enqueues the pipeline (hearsay/enqueue.py).
+    env_file:
+      - /mnt/fast/hearsay/config/capture.env
+      - /mnt/fast/hearsay/config/corral.env
     environment:
       HEARSAY_RAW_DIR: /data/raw
     volumes:

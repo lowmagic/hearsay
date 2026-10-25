@@ -21,6 +21,11 @@ NAS_STREAM="$NAS_ROOT/stream"
 IDEAMACHINE_VOCAB_DIR="/mnt/fast/ideamachine/vocab"
 NAS_PORTAL_ENV="$NAS_CONFIG/portal.env"
 NAS_CAPTURE_ENV="$NAS_CONFIG/capture.env"
+NAS_CORRAL_ENV="$NAS_CONFIG/corral.env"
+# Corral's NAS worker (github.com/junglestyle/corral, examples/system-worker.sh
+# there) runs from here, and its server listens on this port.
+NAS_CORRAL_DIR="/mnt/fast/corral"
+NAS_CORRAL_PORT=8700
 NAS_PORTAL_PORT=8788
 NAS_CAPTURE_PORT=8789
 APPS_UID=568
@@ -71,6 +76,15 @@ wait_for_status() {
         sleep 1
     done
     die "expected $expected from $method $url, last got '$code'"
+}
+
+# Writes stdin to FILE only if that changes it, and says whether it did, so a
+# re-run doesn't restart a worker for nothing.
+write_if_changed() {
+    local file="$1" content
+    content="$(cat)"
+    [ -f "$file" ] && [ "$(cat "$file")" = "$content" ] && return 1
+    printf '%s\n' "$content" > "$file"
 }
 
 # POSTs without a token and waits until the receiver answers 401.

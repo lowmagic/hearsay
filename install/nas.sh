@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # TrueNAS SCALE: datasets on the fast pool (moved from storage once), secrets,
-# images, portal and capture containers, the hourly reprocess.
+# images, portal and capture containers, the reprocess kind on corral's
+# worker, and the hourly enqueue.
 # Run as root from the clone in /mnt/fast/repos/hearsay. Safe to re-run; also
 # how updates are deployed.
 set -euo pipefail
@@ -175,6 +176,37 @@ export HEARSAY_COMMIT
 # --profile tools also builds the one-shot worker (reprocess) and check images.
 "${COMPOSE[@]}" --profile tools build
 
+say "Corral (github.com/junglestyle/corral)"
+# Reprocess runs as a kind on corral's NAS worker, and the capture receiver
+# enqueues the pipeline after each upload. Corral is set up from its own repo.
+systemctl is-active -q corral-worker && [ -f "$NAS_CORRAL_DIR/worker.toml" ] \
+    || die "no corral worker running from $NAS_CORRAL_DIR. Set up corral's server and NAS worker (docs/running.md
+in junglestyle/corral, examples/system-worker.sh there), then re-run."
+grep -q '"nas"' "$NAS_CORRAL_DIR/worker.toml" \
+    || die "the corral worker in $NAS_CORRAL_DIR/worker.toml doesn't offer \"nas\"; add it to offers, then re-run"
+corral_token="$(env_get "$NAS_CORRAL_DIR/env" CORRAL_TOKEN)"
+[ -n "$corral_token" ] || die "no CORRAL_TOKEN in $NAS_CORRAL_DIR/env"
+# The tailnet address, because the capture container reaches the host there.
+corral_url="http://$HEARSAY_TAILNET_IP:$NAS_CORRAL_PORT"
+curl -fsS -o /dev/null -H "Authorization: Bearer $corral_token" "$corral_url/workers" \
+    || die "corral's server doesn't answer at $corral_url with the token in $NAS_CORRAL_DIR/env"
+# Rewritten every run, so a new token reaches the receiver.
+(umask 077; printf 'CORRAL_URL=%s\nCORRAL_TOKEN=%s\n' "$corral_url" "$corral_token" > "$NAS_CORRAL_ENV")
+mkdir -p "$NAS_CORRAL_DIR/kinds.d"
+# Blocking flock, so a reprocess run by hand delays the job instead of failing
+# it. systemd-cat keeps its output under journalctl -t hearsay-reprocess.
+if write_if_changed "$NAS_CORRAL_DIR/kinds.d/hearsay.toml" <<EOF
+# Written by hearsay's install/nas.sh on every run.
+[kinds."hearsay.reprocess"]
+argv = ["systemd-cat", "-t", "hearsay-reprocess", "flock", "/run/hearsay-reprocess.lock",
+        "docker", "compose", "-f", "$REPO_DIR/install/compose.yaml", "run", "--rm", "-T", "reprocess"]
+EOF
+then
+    systemctl restart corral-worker
+    echo "kinds updated, worker restarted"
+fi
+echo "server $corral_url, kinds in $NAS_CORRAL_DIR/kinds.d/hearsay.toml"
+
 say "Starting portal and capture receiver"
 # --remove-orphans: the old Omi receiver was a service of this project.
 "${COMPOSE[@]}" up -d --remove-orphans
@@ -199,28 +231,33 @@ say "Reprocessing now"
 # journalctl -t hearsay-reprocess
 flock /run/hearsay-reprocess.lock "${COMPOSE[@]}" run --rm -T reprocess </dev/null
 
-say "Hourly reprocess (TrueNAS cron job)"
-# At :30, offset from the dev box's transcription timer at :00, so new audio
-# goes WAV -> transcript -> turns within about an hour. flock skips a run
-# while the previous one is still going. Registered through midclt so it
-# shows in the TrueNAS UI (System -> Advanced -> Cron Jobs) and survives updates.
-# Output goes to the journal, not a file on either pool. The middleware
-# appends its own "> /dev/null 2> /dev/null" to the command, so the pipe
-# sits inside an outer subshell.
-REPROCESS_CMD="( flock -n /run/hearsay-reprocess.lock docker compose -f $REPO_DIR/install/compose.yaml run --rm -T reprocess </dev/null 2>&1 | logger -t hearsay-reprocess )"
+say "Hourly enqueue (TrueNAS cron job)"
+# Uploads enqueue the pipeline themselves; this catches any that couldn't
+# reach corral. The chain's keys coalesce, so it never doubles up. Registered
+# through midclt so it shows in the TrueNAS UI (System -> Advanced -> Cron
+# Jobs) and survives updates. Output goes to the journal, not a file on either
+# pool. The middleware appends its own "> /dev/null 2> /dev/null" to the
+# command, so the pipe sits inside an outer subshell.
+ENQUEUE_CMD="( docker exec hearsay-capture python -m hearsay.enqueue 2>&1 | logger -t hearsay-enqueue )"
 cron_payload="$(python3 -c '
 import json, sys
-print(json.dumps({"user": "root", "command": sys.argv[1], "description": "hearsay reprocess",
+print(json.dumps({"user": "root", "command": sys.argv[1], "description": "hearsay enqueue",
                   "schedule": {"minute": "30", "hour": "*", "dom": "*", "month": "*", "dow": "*"},
-                  "enabled": True, "stdout": True, "stderr": True}))' "$REPROCESS_CMD")"
-if [ -z "$cron_id" ]; then
+                  "enabled": True, "stdout": True, "stderr": True}))' "$ENQUEUE_CMD")"
+# The hourly reprocess cron job is gone: corral's worker runs reprocess.
+[ -z "$cron_id" ] || { midclt call cronjob.delete "$cron_id" >/dev/null; echo "removed: hourly reprocess"; }
+enqueue_id="$(midclt call cronjob.query '[["description", "=", "hearsay enqueue"]]' \
+    | python3 -c 'import json, sys; jobs = json.load(sys.stdin); print(jobs[0]["id"] if jobs else "")')"
+if [ -z "$enqueue_id" ]; then
     midclt call cronjob.create "$cron_payload" >/dev/null
-    echo "created: hourly reprocess at :30"
+    echo "created: hourly enqueue at :30"
 else
-    midclt call cronjob.update "$cron_id" "$cron_payload" >/dev/null
-    echo "up to date: hourly reprocess at :30 (job $cron_id)"
+    midclt call cronjob.update "$enqueue_id" "$cron_payload" >/dev/null
+    echo "up to date: hourly enqueue at :30 (job $enqueue_id)"
 fi
-echo "log: journalctl -t hearsay-reprocess"
+docker exec hearsay-capture python -m hearsay.enqueue \
+    || die "the capture container can't enqueue on corral at $corral_url"
+echo "logs: journalctl -t hearsay-enqueue, journalctl -t hearsay-reprocess"
 
 say "Verifying uploads land in $NAS_RAW"
 # Manual: only the operator's phone (or Mac) can send a real upload.
