@@ -221,7 +221,7 @@ def test_a_spot_where_the_owner_spent_time_can_be_named(portal):
     db.executescript(CONVERSATIONS_SCHEMA + PLACES_SCHEMA)
     # Readings around the fixture's conversation (its WAV starts at 2026-01-01 00:00 UTC).
     db.executemany("INSERT INTO locations VALUES ('p', ?, -26.12, 80.14, 65)", [(1_767_225_590 + 60 * i,) for i in range(5)])
-    db.execute("INSERT INTO conversations VALUES ('c1', 1_767_225_590, 1_767_225_900, 32, 0)")
+    db.execute("INSERT INTO conversations VALUES ('c1', 1767225590, 1767225900, 32, 0)")
     db.commit()
     db.close()
 
