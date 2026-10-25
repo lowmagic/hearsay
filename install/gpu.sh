@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Dev box GPU worker: an hourly systemd user timer that transcribes and
-# diarizes conversation WAVs from the NAS (hearsay/transcribe.py) and writes
-# the transcripts back. Run as your normal user on the dev box, after
+# Dev box GPU worker: transcription (hearsay/transcribe.py) as a kind on the
+# dev box's corral worker, which runs it when the pipeline reaches it. It
+# transcribes and diarizes conversation WAVs from the NAS and writes the
+# transcripts back. Run as your normal user on the dev box, after
 # install/nas.sh. Safe to re-run; also how updates are deployed.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -9,9 +10,10 @@ source "$(dirname "$0")/lib.sh"
 GPU_VENV="$HOME/.local/share/hearsay/gpu-venv"
 DEV_ENV="$HOME/.config/hearsay/dev.env"
 UNIT_DIR="$HOME/.config/systemd/user"
+CORRAL_CONFIG="$HOME/.config/corral"
 DIARIZATION_MODEL="pyannote/speaker-diarization-community-1"
 
-[ "$(id -u)" -ne 0 ] || die "run as your normal user, not root: the timer and its config are per user"
+[ "$(id -u)" -ne 0 ] || die "run as your normal user, not root: the corral worker and its config are per user"
 
 say "Checking the GPU"
 # A driver/library version mismatch after a driver update also lands here.
@@ -19,7 +21,7 @@ nvidia-smi -L >/dev/null 2>&1 || die "nvidia-smi fails. If it reports a version 
 nvidia-smi -L
 
 say "Checking ssh to the NAS works unattended"
-# The timer has no terminal and no ssh agent, so the key must work without either.
+# Corral's worker has no terminal and no ssh agent, so the key must work without either.
 env -u SSH_AUTH_SOCK ssh -o BatchMode=yes nas true \
     || die "'ssh nas' needs a key that works without a passphrase prompt or agent. Fix ~/.ssh, then re-run."
 
@@ -59,38 +61,40 @@ except Exception as e:
     sys.exit(f'no access ({type(e).__name__}): accept the terms at https://huggingface.co/$DIARIZATION_MODEL')
 " || die "fix model access, then re-run"
 
-say "Hourly timer"
-mkdir -p "$UNIT_DIR"
-cat > "$UNIT_DIR/hearsay-transcribe.service" <<EOF
-[Unit]
-Description=Hearsay: transcribe conversation audio from the NAS
-
-[Service]
-Type=oneshot
-EnvironmentFile=$DEV_ENV
-ExecStart=$GPU_VENV/bin/python -m hearsay.transcribe
+say "Transcribe kind on the corral worker (github.com/junglestyle/corral)"
+# Corral's worker is set up from its own repo, as a user unit offering gpu.
+systemctl --user is-active -q corral-worker && [ -f "$CORRAL_CONFIG/worker.toml" ] \
+    || die "no corral worker running from $CORRAL_CONFIG. Set one up as a user unit (docs/running.md in
+junglestyle/corral), then re-run."
+grep -q '"gpu"' "$CORRAL_CONFIG/worker.toml" \
+    || die "the corral worker in $CORRAL_CONFIG/worker.toml doesn't offer \"gpu\"; add it to offers, then re-run"
+mkdir -p "$CORRAL_CONFIG/kinds.d"
+# A shell only to load the Hugging Face token; exec, so the worker's kill reaches Python.
+if write_if_changed "$CORRAL_CONFIG/kinds.d/hearsay.toml" <<EOF
+# Written by hearsay's install/gpu.sh on every run.
+[kinds."hearsay.transcribe"]
+argv = ["/bin/sh", "-c", "set -a; . $DEV_ENV; exec $GPU_VENV/bin/python -m hearsay.transcribe"]
 EOF
-cat > "$UNIT_DIR/hearsay-transcribe.timer" <<EOF
-[Unit]
-Description=Hearsay: transcribe new conversation audio hourly
-
-[Timer]
-OnCalendar=hourly
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-systemctl --user daemon-reload
-systemctl --user enable --now hearsay-transcribe.timer
-# Linger keeps user timers running when you're not logged in.
+then
+    systemctl --user restart corral-worker
+    echo "kinds updated, worker restarted"
+fi
+echo "kinds in $CORRAL_CONFIG/kinds.d/hearsay.toml"
+# The hourly timer corral replaces.
+if [ -f "$UNIT_DIR/hearsay-transcribe.timer" ]; then
+    systemctl --user disable --now hearsay-transcribe.timer
+    rm -f "$UNIT_DIR/hearsay-transcribe.timer" "$UNIT_DIR/hearsay-transcribe.service"
+    systemctl --user daemon-reload
+    echo "removed: hourly transcription timer"
+fi
+# Linger keeps the user's corral worker running when you're not logged in.
 if ! loginctl show-user "$USER" -p Linger | grep -q yes; then
     loginctl enable-linger "$USER" || die "run: sudo loginctl enable-linger $USER, then re-run this"
 fi
 
 say "First run (transcribes everything pending; can take a few minutes)"
-systemctl --user start hearsay-transcribe.service \
-    || die "the run failed: journalctl --user -u hearsay-transcribe -n 50"
-journalctl --user -u hearsay-transcribe -n 20 --no-pager -o cat
+# Run here, not through corral, to see it work. The worker counts it as
+# foreign GPU use and holds off GPU jobs until it ends.
+(set -a; . "$DEV_ENV"; "$GPU_VENV/bin/python" -m hearsay.transcribe) || die "the run failed (above)"
 
-say "Done. Reprocess on the NAS to turn the new transcripts into turns."
+say "Done. Uploads now enqueue transcription through corral (journalctl --user -u corral-worker)."
