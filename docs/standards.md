@@ -35,8 +35,8 @@ examples. Where it differs from an org rule, it says so, and it wins.
 ## Running it
 
 - `make check` runs everything CI runs: the tests, in the `.venv` that `install/dev.sh` makes, then a diff of
-  [org-standards.md](org-standards.md) against the org's current file, so a hand edit or a stale copy fails.
-  `make sync-standards` refreshes it.
+  [org-standards.md](org-standards.md) against the org's current file, so a hand edit or a stale copy fails. That
+  diff fetches the org's file, so `make check` needs network. `make sync-standards` refreshes the copy.
 - Install and deployment live in `install/`, one script per target, in the order [install.md](install.md) gives. The
   rules for those scripts are in [AGENTS.md](../AGENTS.md#installation).
 
