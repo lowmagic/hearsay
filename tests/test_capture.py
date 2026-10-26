@@ -200,6 +200,27 @@ def test_audio_stored_while_away_is_placed_by_the_pendants_clock(tmp_path):
     assert abs(s1 - (away + 10)) < 1 and abs(s2 - (away + 30)) < 1
 
 
+def test_malformed_records_are_counted_and_the_rest_still_loads(tmp_path):
+    raw, db_path, cache = tmp_path / "raw", tmp_path / "h.sqlite", tmp_path / "capture-pcm"
+    t0 = T.timestamp()
+    frames = opus_frames(51)
+    body = [record(t0 - 0.5, CONNECTED, bytes([21]))]
+    body += [record(t0 + (i + 1) * 0.02, AUDIO, struct.pack("<HB", i, 0) + frames[i]) for i in range(50)]
+    body += [
+        record(t0 + 1.1, AUDIO, b"\x32\x00"),  # no sub byte
+        record(t0 + 1.2, ACTION, bytes([1])),  # no action
+        record(t0 + 1.3, STORED, bytes(10)),  # not a whole packet
+        record(t0 + 1.4, MIC, struct.pack("<H", FRAME)),  # no Opus frame
+        # A codec the firmware doesn't build, so its audio can't be decoded.
+        record(t0 + 1.5, CONNECTED, bytes([99])),
+        record(t0 + 1.6, AUDIO, struct.pack("<HB", 0, 0) + frames[50]),
+    ]
+    upload(raw, T + timedelta(minutes=1), "k-malformed", b"".join(body))
+    rebuild(raw, db_path)
+    report = load_captures(raw, db_path, cache)
+    assert (report["runs"], report["malformed_records"]) == (1, 5)
+
+
 def test_marks_follow_what_the_app_did_with_each_tap(tmp_path):
     raw, db_path = tmp_path / "raw", tmp_path / "h.sqlite"
     t0 = T.timestamp()

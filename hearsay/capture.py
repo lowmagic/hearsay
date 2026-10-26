@@ -341,6 +341,28 @@ def mac_runs(records: list[tuple[float, int, bytes]], channel: int) -> list[tupl
     return out
 
 
+def malformed(records: list[tuple[float, int, bytes]]) -> int:
+    """How many records the readers above skip as malformed: an ACTION,
+    AUDIO, MIC or SYSTEM record too short to hold its fields, a STORED record
+    of the wrong length, and AUDIO in a codec the firmware doesn't build.
+    Raw is never changed, so they're counted, not raised: raising would stop
+    every reprocess."""
+    count = 0
+    codec = None
+    for _, kind, data in records:
+        if kind == CONNECTED:
+            codec = data[0] if data and data[0] in FRAME_SAMPLES else None
+        elif kind == ACTION:
+            count += len(data) < 2
+        elif kind == AUDIO:
+            count += codec is None or len(data) < 3
+        elif kind == STORED:
+            count += len(data) != STORED_HEADER.size + STORED_PACKET
+        elif kind in (MIC, SYSTEM):
+            count += len(data) <= MAC_FRAME.size
+    return count
+
+
 def decode_mac(opus: ctypes.CDLL, run: list[tuple[int, bytes]]) -> bytes:
     """PCM for a Mac run, each frame exactly its stated length so the run's
     timing holds even if a frame doesn't decode."""
@@ -498,4 +520,5 @@ def load_captures(raw_dir: Path, db_path: Path, cache_dir: Path) -> dict:
         db.close()
     return {"uploads": len(paths), "runs": len(rows), "hours": round(sum(r[1] for r in rows) / 3600, 2),
             "lost_frames": sum(r[3] for r in rows), "stored_runs": len(stored), "stored_unplaced": unplaced,
+            "malformed_records": malformed(records),
             "mac_hours": round(sum(r[1] for r in mac_rows if r[2] == "mixed") / 3600, 2)}
