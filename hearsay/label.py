@@ -5,7 +5,7 @@ Naming other speakers happens in the web portal (hearsay/portal.py).
 Runs on the operator's own machine, not in the container: it plays audio
 locally and reaches the NAS over `ssh nas`. Standard library only, so any
 checkout works (`python3 -m hearsay.label`), or install it as a command with
-`uv tool install git+ssh://git@github.com/nathancurry/hearsay.git` and run
+`uv tool install git+ssh://git@github.com/junglestyle/hearsay.git` and run
 `hearsay-label`. Labels are the operator's durable input, in the labels
 dir on the NAS, never rebuilt: labels are appended, and enrollment.json is
 rewritten only to add a window.

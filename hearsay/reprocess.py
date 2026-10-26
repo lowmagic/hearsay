@@ -3,7 +3,8 @@ audio, turns, speaker labels, people, and the utterance stream.
 
 Turns come from transcripts the dev box makes of each WAV (hearsay/transcribe.py),
 so new audio takes a reprocess, a transcription run, then another reprocess.
-On the NAS this runs hourly (install/nas.sh), offset from the dev box's timer.
+On the NAS corral's worker runs it when an upload enqueues the pipeline, and
+an hourly enqueue (install/nas.sh) catches uploads that couldn't.
 
 Every run builds a complete new database from raw in a scratch directory
 (a tmpfs in the container), then brings the real one up to date in a single
@@ -15,8 +16,8 @@ change replaces the changed table inside the same transaction. Deleting
 the database is always safe: the next run fills a new one from raw.
 
 Slow steps (voice detection, speaker embeddings) are cached by audio content
-next to the database. A run waits for any other to finish (the hourly one and
-one started by hand used to overlap and break each other).
+next to the database. A run waits for any other to finish (one corral starts
+and one started by hand would otherwise overlap and break each other).
 """
 
 import fcntl
