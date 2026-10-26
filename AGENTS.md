@@ -71,7 +71,7 @@ Guarantees consumers rely on (Idea Machine, `docs/ROADMAP.md` §3 there):
   reprocess, so re-running from raw never brings forgotten speech back into
   the stream. Raw payloads and audio of a forgotten span are kept for now:
   deleting them is slice 12's call, alongside retention. Until the operator
-  can forget (slice 12), the list is empty.
+  can forget (slice 20), the list is empty.
 
 ## Invariants
 
@@ -101,7 +101,8 @@ Slice 18: review that shows what was said, and gates new matches (see the
 roadmap). Every clip in the portal shows its words, time and place. Next,
 voiceprints built only from the operator's input, and new matches to a
 named person gated in batches, where rejecting one keeps that speaker apart
-from them. Then slice 19 (turns kept without their audio) and slice 12
+from them. Then slice 20 (throw out what was said, and hold the stream a
+week), then slice 19 (turns kept without their audio) and slice 12
 (retention), which change the invariants on raw payloads and re-running
 from raw.
 
@@ -135,10 +136,10 @@ upload, `hearsay/capture.py`), and each conversation in the stream lists the
 places the operator named that it happened at (`hearsay/places.py`,
 labels/places.jsonl), never coordinates.
 
-Slice 12 (retention) follows slices 18 and 19: then all audio past a
+Slice 12 (retention) follows slices 18, 20 and 19: then all audio past a
 rolling window (90 days to start) is deleted, the owner's too except the
-enrollment windows', and a forgotten span leaves the stream and is listed in
-`forgotten.json`.
+enrollment windows', and so is the audio of every stretch the operator
+threw out.
 
 Slice 11 (Mac audio capture) is done: a menu-bar app on the operator's
 personal Mac records the mic and the call as separate channels, only after
