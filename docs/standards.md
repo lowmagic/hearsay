@@ -15,12 +15,18 @@ examples. Where it differs from an org rule, it says so, and it wins.
 
 - One obvious way: only the reprocess builds the database and writes the stream, from raw payloads, imports and labels.
   The portal and `hearsay-label` write labels and read the database; they never change it.
+- Code never handles a database older than itself: the database is rebuilt from raw, so a missing table or column is a
+  real failure, not one to work around.
+- Errors never pass silently on the unattended clients either: the iPhone and Mac apps surface any error that loses
+  audio where the operator will see it, not just in a log.
 - Keep functions cohesive and reasonably small, but don't split code just to meet a line count.
 
 ## Pragmatic Programmer
 
 - Orthogonality: keep the existing boundaries (capture receiver, raw payloads, reprocess, transcription on the GPU host,
   the stream) unless the task requires changing them.
+- Overrides the org rule's ADRs in `docs/stack.md`: Hearsay records a decision in the docstring of the module it shapes
+  (e.g. `hearsay/transcribe.py`, `hearsay/affect.py`) and in the [roadmap](roadmap.md).
 
 ## Testing
 
@@ -44,3 +50,11 @@ examples. Where it differs from an org rule, it says so, and it wins.
 
 - Overrides the org rule's `.env.example`: config shape lives in the `install/` scripts, which write each env file
   outside the repo.
+- Overrides the org rule on deployment config. Hearsay has one deployment, and its layout is committed: paths, dataset,
+  ports and the apps UID in `install/lib.sh` and `install/compose.yaml`, and docs may name them. Hostnames, IPs,
+  tailnet names, personal accounts and secrets never are. `nas` is an ssh alias for the role, not a hostname.
+
+## Prose
+
+- Overrides the org rule's "no dates" for a dated measurement that backs a constant (e.g. "Thresholds tuned on
+  2026-09-27" in `hearsay/speakers.py`). It's evidence for the value, not history.

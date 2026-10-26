@@ -152,11 +152,13 @@ All installation and deployment lives in `install/`, one script per target
 (e.g. `install/dev.sh`, `install/nas.sh`, `install/gpu.sh`). Shared helpers
 go in `install/lib.sh`. No install scripts live outside `install/`.
 
-`docs/install.md` is the orientation doc for installation (`README.md` is
-the project overview and links to it): which script runs on
-which host, in what order, and anything that happens between scripts
-(pre-flight checks, post-flight verification, operator actions that span
-targets). It links to scripts; it does not duplicate what they do.
+`docs/install.md` is the operator's guide (`README.md` is the project
+overview and links to it). Its Install section orients installation: which
+script runs on which host, in what order, and anything that happens between
+scripts (pre-flight checks, post-flight verification, operator actions that
+span targets). It describes a fresh install only. The sections after it cover
+running Hearsay: recording, reprocessing, the owner's voice, the stream,
+imports and naming. It links to scripts; it does not duplicate what they do.
 
 - Any step inside a single target belongs in that target's script. A
   within-target step that only exists in docs/install.md or a chat is a bug.
@@ -172,3 +174,5 @@ targets). It links to scripts; it does not duplicate what they do.
   same change. If it affects order, hosts, or between-script actions, update
   docs/install.md in the same change too.
 - Secrets are read from an env file outside the repo, never written into it.
+- A step that changes an existing install (a move, a retirement) says in its
+  comment which hosts it's for, and is deleted once they've all run it.

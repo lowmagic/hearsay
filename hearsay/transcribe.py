@@ -84,7 +84,9 @@ def ssh(command: list[str], stdin: bytes = b"") -> bytes:
 def current_settings() -> dict:
     """SETTINGS, plus the words committed on the portal's Words page. Without
     any, exactly SETTINGS, so transcripts from before there were words still count."""
-    committed = ssh(["sh", "-c", f"'cat {WORDS} 2>/dev/null || true'"])
+    # Missing means no words yet. Any other failure stops: read as none, it would
+    # change the settings and re-transcribe everything.
+    committed = ssh(["sh", "-c", f"'[ ! -e {WORDS} ] || cat {WORDS}'"])
     words = boosted(json.loads(committed)) if committed.strip() else []
     return SETTINGS | ({"boost_words": words, "boost_alpha": BOOST_ALPHA} if words else {})
 
