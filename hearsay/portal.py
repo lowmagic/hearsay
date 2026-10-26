@@ -1,7 +1,7 @@
 """Web portal for naming anonymous speakers, from a phone or any browser.
 
 Listens only on the LAN and tailnet addresses (install/compose.yaml), never
-through the Cloudflare tunnel. Login is a plain HTML form, not an HTTP auth
+the public internet. Login is a plain HTML form, not an HTTP auth
 dialog, so password managers can fill it; sessions are HMAC-signed cookies.
 The iPhone app logs in instead with the capture token it already holds
 (POST /login/app, bearer): the portal shows in its Voices tab, and whoever
