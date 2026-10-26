@@ -156,8 +156,10 @@ heard at that place first, and that measurably saves the operator time.
 ## Coding standards
 
 Code, tests, comments and prose follow [docs/standards.md](docs/standards.md),
-which builds on the org's [docs/org-standards.md](docs/org-standards.md).
-`make check` runs everything CI runs.
+which builds on the org's [docs/org-standards.md](docs/org-standards.md) and
+the copy of each topic listed in `.org-standards`, such as
+[docs/org-standards-python.md](docs/org-standards-python.md).
+`make check` runs everything CI runs except the org standards check.
 
 ## Installation
 
