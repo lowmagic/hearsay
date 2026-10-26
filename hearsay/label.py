@@ -278,11 +278,8 @@ def import_audio(file: str, start: str) -> None:
 
 
 def report() -> None:
-    try:
-        built = ssh(["sqlite3", DB], b"SELECT key || '=' || value FROM reprocess_info;").decode().split()
-    except subprocess.CalledProcessError:
-        built = []  # the table only exists once a reprocess with this code has run
-    print("database built by: " + (", ".join(built) or "unknown (reprocess predates reprocess_info)"))
+    built = ssh(["sqlite3", DB], b"SELECT key || '=' || value FROM reprocess_info;").decode().split()
+    print("database built by: " + ", ".join(built))
     enrolled = ssh(["sqlite3", DB, '"SELECT start, end, round(coverage, 2), pieces FROM owner_enrollment"'])
     print("enrollment (start | end | coverage | 3 s pieces used):")
     print(enrolled.decode() or "  none; run `python -m hearsay.label enroll` and reprocess\n")
@@ -304,12 +301,8 @@ def report() -> None:
 
 
 def inheritance_report(labeled: dict[str, str]) -> None:
-    try:
-        seconds = {row["basis"]: row["seconds"] or 0 for row in query(COVERAGE_SQL)}
-        inherited = query(INHERITED_SQL)
-    except subprocess.CalledProcessError:
-        print("\nno diarization labels yet (reprocess with this code first)")
-        return
+    seconds = {row["basis"]: row["seconds"] or 0 for row in query(COVERAGE_SQL)}
+    inherited = query(INHERITED_SQL)
     total = sum(seconds.values()) or 1
     print(f"\nspeech time by basis: " + ", ".join(f"{basis} {s / total:.0%}" for basis, s in sorted(seconds.items())))
     checked = [(t["label"], labeled[t["turn_id"]], t["end"] - t["start"]) for t in inherited
@@ -329,11 +322,7 @@ def inheritance_report(labeled: dict[str, str]) -> None:
 
 
 def cluster_report() -> None:
-    try:
-        grouped = clusters()
-    except subprocess.CalledProcessError:
-        print("\nno clusters yet (reprocess with this code first)")
-        return
+    grouped = clusters()
     reviewed_rows = query(REVIEWED_SQL)
     named = {r["turn_id"] for r in reviewed_rows if r["kind"] == "name"}
     marked_mixed = {r["turn_id"] for r in reviewed_rows if r["kind"] == "mixed"}
