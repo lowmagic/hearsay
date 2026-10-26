@@ -16,3 +16,5 @@ jobs:
           activate-environment: true
       - run: uv pip install -e ".[dev]"
       - run: make check
+  standards:
+    uses: junglestyle/.github/.github/workflows/standards-check.yml@main
