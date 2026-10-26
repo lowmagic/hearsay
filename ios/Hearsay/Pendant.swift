@@ -37,6 +37,7 @@ final class Pendant: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
     private static let unmutedAtKey = "unmutedAt"
     private static let defaultGain: UInt8 = 6
     private static let awaySinceKey = "awaySince"
+    private static let heardAtKey = "heardAt"
 
     @Published private(set) var state = "starting"
     @Published private(set) var lastMinute = ""
@@ -58,6 +59,8 @@ final class Pendant: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var codec: Data?
+    /// When heardAt was last saved.
+    private var heardSaved = 0.0
     private var gain: CBCharacteristic?
     private var storage: CBCharacteristic?
     private var haptic: CBCharacteristic?
@@ -298,6 +301,7 @@ final class Pendant: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
         guard let value = characteristic.value else { return }
         switch characteristic.uuid {
         case Self.audioData:
+            heard()
             if !muted { spool?.append(kind: Spool.audio, data: value) }
             count(value)
         case Self.buttonEvent:
@@ -379,7 +383,22 @@ final class Pendant: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
     /// tell a stored timestamp from a clock gone wrong.
     private func markAway() {
         guard UserDefaults.standard.object(forKey: Self.awaySinceKey) == nil else { return }
-        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.awaySinceKey)
+        // From when the pendant was last heard, not now: iOS may have ended
+        // the app while the pendant was away, and this is the first the app
+        // has seen of it since. On real data that hid hours of stored audio
+        // from the NAS (hearsay/capture.py).
+        let heard = UserDefaults.standard.object(forKey: Self.heardAtKey) as? Double
+        UserDefaults.standard.set(heard ?? Date().timeIntervalSince1970, forKey: Self.awaySinceKey)
+    }
+
+    /// The pendant stores audio whenever no phone is connected, so it left
+    /// when it was last heard live, muted or paused included. Saved at most
+    /// once a second.
+    private func heard() {
+        let now = Date().timeIntervalSince1970
+        guard now - heardSaved >= 1 else { return }
+        heardSaved = now
+        UserDefaults.standard.set(now, forKey: Self.heardAtKey)
     }
 
     private var awaySince: Date? {
