@@ -236,6 +236,16 @@ Done when: non-owner audio is actually gone from disk, a forgotten span is
 gone from the stream and listed in `forgotten.json`, and nothing that
 depends on either breaks.
 
+Resolved 2026-10-25: retention waits for slices 18 and 19, not for the
+models. Slice 19 keeps what audio produced, so only the audio-dependent
+models (transcription, diarization, speaker embeddings) need tuning before
+it goes; who is speaking re-runs from stored vectors for good. Then all
+audio past the window is deleted, the owner's too, except the enrollment
+windows' (a few minutes, so the owner can be enrolled in a new speaker
+model). Audio still waiting for review (slice 18) is kept up to 30 days past
+the window, then its turns keep the label they have, unconfirmed. The
+invariants on raw payloads and re-running from raw change with it.
+
 ## 13. Where a conversation happened
 
 The phone app records where the owner is while it captures, and each
@@ -488,3 +498,56 @@ barely above chance against random words (53%), so it is pace across a
 turn, not a sudden rush. In the stream: `delivery` on owner utterances, with
 rate, pauses and stutters, each stutter with the rate before it; ending pitch
 left out (the tracker is noisy at word ends).
+
+## 18. Review that shows what was said, and gates new matches
+
+The operator names speakers by ear, but a clip alone doesn't say which voice
+is meant when several talk, and a wrong place goes unnoticed. And once a
+cluster is named, everything that later joins it takes the name unseen: a
+stranger who sounds like a friend is filed under the friend, and each such
+turn pulls the friend's voice toward theirs.
+
+- Every clip the portal plays shows its words, when it was said, and the
+  named place it was said at.
+- A voiceprint per person, the weighted average of pieces kept per
+  contribution (their confirmed turns in one conversation, or an enrollment
+  window), each with its date and seconds of speech, so a bad one can be
+  taken out. Only the operator's input feeds it: names, enrollment, and
+  matches the operator accepted, never matches Hearsay made on its own.
+  Pieces count alike to start; ageing older ones out is for later, if a
+  replay shows they hurt.
+- Measured first, as in slice 14: leave each named speaker out and compare
+  matching against voiceprints with today's average-linkage clustering (35
+  of 63 back, 2 wrong, on 2026-10-13), one voiceprint per person against one
+  per device (pendant, phone, Mac call), since embeddings carry the channel
+  (slice 15).
+- New matches to a named person come in batches to gate, one diarized
+  speaker in one conversation at a time, each scored against the voiceprint,
+  flagged when the person has never been heard at that place, and showing
+  how long until its audio is deleted (slice 12). Accept confirms; reject
+  says "not them" without saying who, and keeps that speaker from that
+  person the way different names are kept apart now, so it comes back to be
+  named.
+- Matches reach the stream at once, marked unconfirmed until accepted;
+  additive, so `format_version` stays 1.
+
+Done when: the operator gates new matches in batches, rejected speakers stay
+apart from the person, and voiceprints come only from the operator's input.
+
+Started 2026-10-25 with the words, time and place on every clip.
+
+## 19. Turns kept without their audio
+
+Everything is rebuilt from raw audio every hour, so no audio can go (slice
+12). Instead keep, per turn, what its audio produced: times, words and their
+timings, diarized speaker, speaker embedding (with the model that made it),
+owner similarity, affect and delivery. About 11 MB for 14,000 turns, against
+9 GB of audio and decoded audio. Reprocess reads audio only for
+conversations that are new or still growing, and rebuilds the rest from
+these records and the operator's labels. Who is speaking (thresholds,
+clustering, voiceprints, names) still re-runs on every turn ever recorded; what came out of
+the audio is fixed once its audio is gone. A new speaker model applies only
+to audio still kept, so changing models is a deliberate migration.
+
+Done when: a rebuild from the records equals a rebuild from raw, and a
+reprocess with nothing new reads no audio.
