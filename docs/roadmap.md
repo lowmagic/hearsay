@@ -237,13 +237,13 @@ re-transcribed. Decided 2026-10-06: then delete audio older than a rolling
 window, 90 days to start, revised down later. First resolve how this fits
 "raw payloads are never deleted" and "everything re-runs from raw".
 
-Forgetting goes here too: the operator forgets a span, which is left out
-of the stream on every reprocess and appended to `forgotten.json`. Whether
-its raw payloads and audio are deleted is the same question as above.
+Forgetting comes first, in slice 20: the operator throws out a stretch,
+which leaves the stream on every reprocess and is appended to
+`forgotten.json`. Its raw payloads and audio are deleted here, with
+retention, and not held for the window.
 
-Done when: non-owner audio is actually gone from disk, a forgotten span is
-gone from the stream and listed in `forgotten.json`, and nothing that
-depends on either breaks.
+Done when: non-owner audio is actually gone from disk, a thrown-out
+stretch's audio is gone too, and nothing that depends on either breaks.
 
 Resolved 2026-10-25: retention waits for slices 18 and 19, not for the
 models. Slice 19 keeps what audio produced, so only the audio-dependent
@@ -560,3 +560,42 @@ to audio still kept, so changing models is a deliberate migration.
 
 Done when: a rebuild from the records equals a rebuild from raw, and a
 reprocess with nothing new reads no audio.
+
+## 20. Throw out what was said, and hold the stream a week
+
+The operator can't take anything back once it's said near the pendant: it
+reaches the stream within the hour, and Idea Machine sends it to Claude.
+Instead, nothing reaches consumers for a week, and in that week the
+operator can read and hear a whole conversation and throw out parts of it.
+Decided 2026-10-26:
+
+- A conversation page in the portal: the transcript, each turn with who
+  said it, when, and at which named place, and audio that plays from any
+  turn on through the conversation. A list of conversations, newest first,
+  says which are still held and for how long.
+- The operator marks a stretch, from one turn to another (whole turns to
+  start; word timings would allow trimming inside a turn later), or a
+  whole conversation, and throws it out with an optional reason. A mark is
+  the operator's durable input, by absolute time like names
+  (labels/forget.jsonl), so it survives re-transcription and applies on
+  every reprocess: its turns leave the stream, their words leave the
+  database, and they count for nothing (clusters, hints, affect,
+  delivery). The stretch is appended to `forgotten.json`. A mark can be
+  taken back until the next reprocess applies it; after that it is final,
+  since `forgotten.json` never shrinks.
+- The hold: a conversation enters the stream (its index entry, file, taps
+  and places) a week after it ends, or sooner when the operator releases
+  it from its page. Until then consumers don't see it at all. Additive, so
+  `format_version` stays 1; Idea Machine's captures, self-notes too, arrive
+  a week late unless released.
+- The audio, raw payloads and transcription output of a thrown-out stretch
+  are kept until slice 12 deletes them. Gone means every copy: raw
+  payloads, conversation WAVs, the decoded audio and embedding cache, the
+  transcription output, and the NAS's nightly snapshots once they expire.
+
+Comes after slice 18 and before 19 and 12: it needs neither, and it is
+the only way to keep something from Claude until then.
+
+Done when: the operator reviews a week of conversations on the page,
+thrown-out stretches never reach Idea Machine, and the rest arrives on
+release or after the week.
