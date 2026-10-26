@@ -326,8 +326,6 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, user: str, pass
         try:
             return [p for (p,) in db.execute(
                 "SELECT person FROM cluster_voices WHERE cluster = ? ORDER BY similarity DESC", (cluster_id,))]
-        except sqlite3.OperationalError:
-            return []  # a database from before cluster_voices, until the next reprocess
         finally:
             db.close()
 
