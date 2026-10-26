@@ -51,16 +51,18 @@ def speaker_kind(label: str | None, person: str | None, basis: str | None) -> tu
     """(kind, name, basis), or None for turns left out of the stream.
 
     Names starting with "_" are the operator's categories, not people.
-    _stranger is someone present, so it stays; every other category (_noise,
-    _media) is not speech from anyone present and is left out.
+    _stranger is someone present, so it stays; _me is the owner, in turns
+    their voice or channel said were someone else's; every other category
+    (_noise, _media, _music) is not speech from anyone present and is left out.
 
     A turn labeled by its diarized speaker rather than its own voice
     (hearsay/speakers.py) says so: its basis is "diarization", whatever the
     kind. Likewise "channel" for one labeled by which channel of a Mac
-    recording it was loud on.
+    recording it was loud on, except a turn the operator says is theirs:
+    that channel said it was the call's.
     """
     found = speaker_from_label(label, person)
-    if found and basis in ("diarization", "channel"):
+    if found and (basis == "diarization" or basis == "channel" and person != "_me"):
         return found[0], found[1], basis
     return found
 
@@ -68,6 +70,8 @@ def speaker_kind(label: str | None, person: str | None, basis: str | None) -> tu
 def speaker_from_label(label: str | None, person: str | None) -> tuple[str, str | None, str] | None:
     if label == "owner":
         return "owner", None, "voice"
+    if person == "_me":
+        return "owner", None, "named"
     if person and person.startswith("_"):
         return ("stranger", None, "named") if person == "_stranger" else None
     if person:

@@ -187,6 +187,26 @@ def test_renaming_a_person_renames_every_cluster_at_once(portal):
     db.close()
 
 
+def test_a_cluster_the_operator_says_is_them_is_the_owners(portal):
+    client, db_path, labels_dir = portal
+    log_in(client)
+    db = sqlite3.connect(db_path)
+    cluster_a = db.execute("SELECT cluster FROM turn_people WHERE turn_id = 'a0'").fetchone()[0]
+    db.close()
+
+    assert "value='_me' formnovalidate>Me</button>" in client.get(f"/cluster/{cluster_a}").text
+    client.post(f"/cluster/{cluster_a}", data={"category": "_me"})
+    reprocess_people(db_path, labels_dir)
+    db = sqlite3.connect(db_path)
+    people = dict(db.execute("SELECT turn_id, person FROM turn_people"))
+    db.close()
+    assert {people[f"a{i}"] for i in (0, 2, 4, 6)} == {"_me"}
+
+    # Any category can take a person's place everywhere, the owner too.
+    known = client.get("/person/_me").text
+    assert all(f"<option value='{c}'>" in known for c in ("_media", "_music", "_noise", "_stranger"))
+
+
 def test_a_clip_tagged_on_its_own_keeps_its_tag_and_leaves_the_cluster_alone(portal):
     client, db_path, labels_dir = portal
     log_in(client)
