@@ -80,7 +80,8 @@ then
     echo "kinds updated, worker restarted"
 fi
 echo "kinds in $CORRAL_CONFIG/kinds.d/hearsay.toml"
-# The hourly timer corral replaces.
+# For the switch to corral (the dev box): the hourly timer corral replaces.
+# Delete this once gpu.sh has run with corral up.
 if [ -f "$UNIT_DIR/hearsay-transcribe.timer" ]; then
     systemctl --user disable --now hearsay-transcribe.timer
     rm -f "$UNIT_DIR/hearsay-transcribe.timer" "$UNIT_DIR/hearsay-transcribe.service"

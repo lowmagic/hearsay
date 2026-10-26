@@ -61,29 +61,6 @@ the next transcription. With a
 free Apple ID the phone's install expires after 7 days; re-running
 `install/ios.sh` renews it.
 
-### Moving from the storage pool (October 2026)
-
-Hearsay used to live in `storage/hearsay` on the spinning pool, with the
-clone in `/mnt/fast/hearsay/repo`. `nas.sh` moves it: when a dataset is
-missing under `fast/hearsay` and present under `storage/hearsay`, it stops
-Hearsay and its cron job, copies each dataset with `zfs send | zfs recv`,
-sets `storage/hearsay` read-only, and starts everything from the new paths.
-Before running it:
-
-1. On the dev box, `git pull` (its transcription timer then uses the new
-   paths; runs fail until the NAS has moved, and catch up after).
-2. On the NAS, as admin, clone into `/mnt/fast/repos/hearsay` (above), then
-   `sudo /mnt/fast/repos/hearsay/install/nas.sh`.
-
-It also retires Omi's webhook receiver: it removes the receiver and
-Cloudflare tunnel containers, asks you to delete the tunnel and its DNS
-record in Cloudflare, waits until the hostname stops resolving, and deletes
-the tunnel token and webhook secret. The stream moves with the other
-datasets, so Idea Machine finds every conversation it had; then switch it
-over with `sudo /mnt/fast/repos/ideamachine/install/nas.sh`. When you've checked Hearsay works
-from `fast`, destroy the old copy with the command `nas.sh` prints
-(`sudo zfs destroy -r storage/hearsay`).
-
 ## Data
 
 Uploads land in `/mnt/fast/hearsay/raw/capture/<date>/`; Omi's webhook
