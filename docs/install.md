@@ -1,7 +1,10 @@
 # Running Hearsay
 
-The operator's guide: which script runs on which host, in what order, and what
-to do between them. For what Hearsay is, see the [README](../README.md).
+The operator's guide. Install says which script runs on which host, in what
+order, and what to do between them; the sections after it cover running
+Hearsay: recording, reprocessing, your voice, reading the stream, importing
+missed audio and naming speakers. For what Hearsay is, see the
+[README](../README.md).
 
 ## Install
 
