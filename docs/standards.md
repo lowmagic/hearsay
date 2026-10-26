@@ -15,6 +15,10 @@ examples. Where it differs from an org rule, it says so, and it wins.
 
 - One obvious way: only the reprocess builds the database and writes the stream, from raw payloads, imports and labels.
   The portal and `hearsay-label` write labels and read the database; they never change it.
+- Code never handles a database older than itself: the database is rebuilt from raw, so a missing table or column is a
+  real failure, not one to work around.
+- Errors never pass silently on the unattended clients either: the iPhone and Mac apps surface any error that loses
+  audio where the operator will see it, not just in a log.
 - Keep functions cohesive and reasonably small, but don't split code just to meet a line count.
 
 ## Pragmatic Programmer
