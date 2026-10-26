@@ -21,6 +21,8 @@ examples. Where it differs from an org rule, it says so, and it wins.
 
 - Orthogonality: keep the existing boundaries (capture receiver, raw payloads, reprocess, transcription on the GPU host,
   the stream) unless the task requires changing them.
+- Overrides the org rule's ADRs in `docs/stack.md`: Hearsay records a decision in the docstring of the module it shapes
+  (e.g. `hearsay/transcribe.py`, `hearsay/affect.py`) and in the [roadmap](roadmap.md).
 
 ## Testing
 
@@ -44,3 +46,11 @@ examples. Where it differs from an org rule, it says so, and it wins.
 
 - Overrides the org rule's `.env.example`: config shape lives in the `install/` scripts, which write each env file
   outside the repo.
+- Overrides the org rule on deployment config. Hearsay has one deployment, and its layout is committed: paths, dataset,
+  ports and the apps UID in `install/lib.sh` and `install/compose.yaml`, and docs may name them. Hostnames, IPs,
+  tailnet names, personal accounts and secrets never are. `nas` is an ssh alias for the role, not a hostname.
+
+## Prose
+
+- Overrides the org rule's "no dates" for a dated measurement that backs a constant (e.g. "Thresholds tuned on
+  2026-09-27" in `hearsay/speakers.py`). It's evidence for the value, not history.
