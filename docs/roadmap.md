@@ -144,6 +144,15 @@ Protocol details come from Omi's open-source firmware (MIT).
 Done when: a day of capture reaches Hearsay from the phone with Omi's cloud
 out of the loop, including a stretch out of range and a paused stretch.
 
+Follow-up 2026-10-25, stored audio: of 277 minutes the pendant stored while
+away, only 139 were placed. Its packet count restarted from 0 on 10-07 and
+10-11, and placed in count order a later away stretch made every earlier one
+seem to step back, so audio placed before 10-11 left the timeline; and an
+app iOS ended while the pendant was away dated the stretch from its relaunch,
+hours late. Packets now go in download order, an away stretch starts when the
+pendant was last heard live, and the app saves when that was. 55 minutes
+from 10-07, where the pendant's clock was decades off, stay unplaced.
+
 ## 10. Every turn attributed
 
 Turns too short to embed (under 2.5 s), or scoring between the owner and

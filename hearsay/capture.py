@@ -61,6 +61,13 @@ last time a phone set it: a packet is placed only if its time is within the
 away stretch (after it began, before the download) and doesn't step back
 from the packets before it. The rest stay in raw, unplaced.
 
+The away stretch began when the phone last heard the pendant live, which can
+be well before the time the iPhone app sends as its start: an app iOS ended
+while the pendant was away noticed only when it was launched again (on real
+data, 117 minutes of stored audio from 1 to 4 hours before it, almost all
+where nothing else was heard). So the stretch starts at the last live audio
+before that time, when there is any.
+
 Protocol facts are from Omi's firmware (BasedHardware/omi, MIT):
 omi/firmware/omi/src/lib/core/transport.c, codec.c, button.c.
 
@@ -75,6 +82,7 @@ the run's content, and records it in captured_audio and mac_audio for
 place_bursts.
 """
 
+import bisect
 import ctypes
 import ctypes.util
 import hashlib
@@ -284,11 +292,15 @@ def stored_runs(records: list[tuple[float, int, bytes]]) -> tuple[list[tuple[flo
     """(runs as runs() gives them, packets left unplaced) from STORED records.
 
     A packet downloaded twice (a transfer broken and resumed) is kept once.
-    Packets go in the pendant's order; each one's frames end about half a
-    second after its whole-second time, and a run is laid end to end until a
-    packet lands more than STORED_REANCHOR away.
+    Packets go in the order they were downloaded, which is the pendant's,
+    and not by its sequence number: that restarts from 0 now and then (on
+    real data, 2026-10-07 and 10-11), and in its order a later away stretch
+    made every earlier one seem to step back. Each one's frames end about
+    half a second after its whole-second time, and a run is laid end to end
+    until a packet lands more than STORED_REANCHOR away.
     """
     packets = {}
+    heard = sorted(at for at, kind, _ in records if kind == AUDIO)
     for at, kind, data in records:
         if kind != STORED or len(data) != STORED_HEADER.size + STORED_PACKET:
             continue
@@ -299,13 +311,18 @@ def stored_runs(records: list[tuple[float, int, bytes]]) -> tuple[list[tuple[flo
     out = []
     unplaced = 0
     end = None
-    latest = None  # the pendant's time on the packet before, if placed
-    for (seq, packet), (at, codec, away_since) in sorted(packets.items(), key=lambda p: p[0][0]):
+    latest = None  # the pendant's time on the packet before in this away stretch, if placed
+    stretch = None
+    for (_, packet), (at, codec, away_since) in packets.items():
+        if away_since != stretch:
+            stretch, latest = away_since, None
         if codec not in FRAME_SAMPLES:
             unplaced += 1
             continue
         stamp = int.from_bytes(packet[:4], "big") + 0.5
-        if stamp < away_since - CLOCK_SLACK or stamp > at + CLOCK_SLACK or (latest and stamp < latest - CLOCK_SLACK):
+        i = bisect.bisect_right(heard, away_since)
+        began = heard[i - 1] if i else away_since
+        if stamp < began - CLOCK_SLACK or stamp > at + CLOCK_SLACK or (latest and stamp < latest - CLOCK_SLACK):
             unplaced += 1
             continue
         latest = max(latest or stamp, stamp)
