@@ -86,6 +86,25 @@ def test_stream_attributes_speakers_and_leaves_out_non_speech(tmp_path):
         ("c1", True, False, 8), ("c2", False, True, 0)]
 
 
+def test_turns_the_operator_says_are_theirs_are_the_owners(tmp_path):
+    db_path, stream_dir = build(tmp_path), tmp_path / "stream"
+    db = sqlite3.connect(db_path)
+    db.execute("UPDATE turn_people SET person = '_me' WHERE cluster = 'k2'")
+    # Loud on the call: the channel said someone else, so it isn't the basis.
+    db.execute("UPDATE turn_speakers SET basis = 'channel' WHERE turn_id IN ('c1:0001', 'c1:0004')")
+    db.commit()
+    db.close()
+    write_stream(db_path, stream_dir)
+    _, utterances = read(stream_dir)
+    found = {u["text"]: (u["speaker"]["kind"], u["speaker"]["label"], u["speaker_confidence"]["basis"])
+             for u in utterances}
+    assert found["first anon"] == ("owner", None, "named")
+    assert found["first anon again"] == ("owner", None, "named")
+    assert found["yeah (inherited)"] == ("owner", None, "diarization")
+    assert found["walter's"] == ("person", None, "channel")
+    assert found["second anon"] == ("anonymous", "anon A", "cluster")
+
+
 def test_revisions_change_only_when_a_conversation_does(tmp_path):
     db_path, stream_dir = build(tmp_path), tmp_path / "stream"
     write_stream(db_path, stream_dir)

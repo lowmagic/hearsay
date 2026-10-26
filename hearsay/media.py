@@ -59,7 +59,7 @@ def score_media(db_path: Path) -> dict:
             " FROM turn_speakers ts WHERE ts.embedding IS NOT NULL ORDER BY ts.turn_id"
         ).fetchall()
         # 1 media, 0 someone present (a named person, a stranger, the owner), -1 not a tag to learn from.
-        y = np.array([1 if name == "_media" else 0 if (name and not name.startswith("_")) or name == "_stranger" or owner
+        y = np.array([1 if name == "_media" else 0 if (name and not name.startswith("_")) or name in ("_stranger", "_me") or owner
                       else -1 for _, _, name, owner in rows])
         db.executescript(SCHEMA)
         if (y == 1).sum() < MIN_TRAINING or (y == 0).sum() < MIN_TRAINING:

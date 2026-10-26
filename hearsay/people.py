@@ -101,7 +101,10 @@ def cluster(vectors, names: list[set[str]]) -> list[int]:
             # A category (_noise, _media, _stranger) is many voices, not one,
             # so its average resembles plenty of real speakers: it takes only
             # what the operator tagged. Once a two-turn _noise cluster grew to
-            # 794 turns, real conversation the stream then left out.
+            # 794 turns, real conversation the stream then left out. _me is
+            # the owner's turns that didn't sound like the owner, so it takes
+            # only tagged turns too: anything else it drew in, the stream
+            # would give the owner.
             differ = names[i] != names[j]
             if differ and ((names[i] and names[j]) or category(names[i]) or category(names[j])):
                 sim[i, j] = sim[j, i] = -np.inf
