@@ -528,8 +528,8 @@ turn pulls the friend's voice toward theirs.
 - Measured first, as in slice 14: leave each named speaker out and compare
   matching against voiceprints with today's average-linkage clustering (35
   of 63 back, 2 wrong, on 2026-10-13), one voiceprint per person against one
-  per device (pendant, phone, Mac call), since embeddings carry the channel
-  (slice 15).
+  per source (the pendant, the call side of a Mac recording), since
+  embeddings carry the channel (slice 15).
 - New matches to a named person come in batches to gate, one diarized
   speaker in one conversation at a time, each scored against the voiceprint,
   flagged when the person has never been heard at that place, and showing
