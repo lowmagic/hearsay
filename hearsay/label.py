@@ -6,8 +6,9 @@ Runs on the operator's own machine, not in the container: it plays audio
 locally and reaches the NAS over `ssh nas`. Standard library only, so any
 checkout works (`python3 -m hearsay.label`), or install it as a command with
 `uv tool install git+ssh://git@github.com/nathancurry/hearsay.git` and run
-`hearsay-label`. Labels are the operator's durable input: they are
-appended to the labels dir on the NAS and never rebuilt or overwritten.
+`hearsay-label`. Labels are the operator's durable input, in the labels
+dir on the NAS, never rebuilt: labels are appended, and enrollment.json is
+rewritten only to add a window.
 
     python -m hearsay.label enroll START END   # add an enrollment window
     python -m hearsay.label import FILE START  # add audio the live stream missed
@@ -238,7 +239,8 @@ def enroll(start: str, end: str) -> None:
     }
     if window["end"] <= window["start"]:
         sys.exit("END must be after START")
-    windows = json.loads(ssh(["sh", "-c", f"'cat {ENROLLMENT} 2>/dev/null || echo []'"]))
+    # Missing means none yet; any other failure stops, since the file is rewritten below.
+    windows = json.loads(ssh(["sh", "-c", f"'[ ! -e {ENROLLMENT} ] || cat {ENROLLMENT}'"]) or b"[]")
     if window in windows:
         print("Already enrolled.")
         return
@@ -254,7 +256,9 @@ def import_audio(file: str, start: str) -> None:
     data = path.read_bytes()
     sha = hashlib.sha256(data).hexdigest()
     began = datetime.fromisoformat(start).astimezone(timezone.utc)
-    if ssh(["sh", "-c", f"'grep -l {sha} {IMPORTS}/*.json 2>/dev/null || true'"]).strip():
+    # No sidecars yet, or none matching (grep's 1), means not imported; any other failure stops.
+    found = ssh(["sh", "-c", f"'set -- {IMPORTS}/*.json; [ ! -e \"$1\" ] || grep -l {sha} \"$@\" || [ $? -eq 1 ]'"])
+    if found.strip():
         print(f"{path.name} is already imported.")
         return
     name = f"{began:%Y%m%dT%H%M%SZ}-{sha[:12]}{path.suffix.lower()}"
