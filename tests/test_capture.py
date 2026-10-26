@@ -200,6 +200,51 @@ def test_audio_stored_while_away_is_placed_by_the_pendants_clock(tmp_path):
     assert abs(s1 - (away + 10)) < 1 and abs(s2 - (away + 30)) < 1
 
 
+def test_stored_audio_from_before_the_app_noticed_the_pendant_leave_is_placed(tmp_path):
+    raw, db_path, cache = tmp_path / "raw", tmp_path / "h.sqlite", tmp_path / "capture-pcm"
+    t0 = int(T.timestamp())
+    frames = opus_frames(60)
+    # Heard live until t0, then iOS ended the app; launched again an hour
+    # later, it marks the pendant away from then.
+    live = [record(t0 - 1.0, CONNECTED, bytes([21]))]
+    live += [record(t0 - 1.0 + (i + 1) * 0.02, AUDIO, struct.pack("<HB", i, 0) + frames[i]) for i in range(50)]
+    noticed = t0 + 3600
+    # 1 s stored 10 minutes after the pendant left, and a packet from before
+    # it was last heard (a clock gone wrong).
+    packets = [stored_packet(t0 + 600 + (i + 1) // 10, frames[i * 5 : i * 5 + 5]) for i in range(10)]
+    packets.append(stored_packet(t0 - 600, frames[:5]))
+    stored = b"".join(record(noticed + 5, STORED, struct.pack("<BQd", 21, i, noticed) + p)
+                      for i, p in enumerate(packets))
+    upload(raw, T, "k-1", b"".join(live))
+    upload(raw, T + timedelta(hours=1), "k-2", stored)
+    rebuild(raw, db_path)
+    report = load_captures(raw, db_path, cache)
+    assert report["stored_unplaced"] == 1
+
+    db = sqlite3.connect(db_path)
+    starts = [s for (s,) in db.execute("SELECT start FROM captured_audio ORDER BY start")]
+    db.close()
+    assert len(starts) == 2 and abs(starts[1] - (t0 + 600)) < 1
+
+
+def test_stored_audio_is_placed_after_the_pendant_restarts_its_count(tmp_path):
+    raw, db_path, cache = tmp_path / "raw", tmp_path / "h.sqlite", tmp_path / "capture-pcm"
+    first, second = int(T.timestamp()), int(T.timestamp()) + 86400
+    frames = opus_frames(50)
+
+    def download(away, first_seq):
+        packets = [stored_packet(away + 10 + (i + 1) // 10, frames[i * 5 : i * 5 + 5]) for i in range(10)]
+        return b"".join(record(away + 60, STORED, struct.pack("<BQd", 21, first_seq + i, away) + p)
+                        for i, p in enumerate(packets))
+
+    # A day later the pendant counts from 0 again.
+    upload(raw, T, "k-1", download(first, 5000))
+    upload(raw, T + timedelta(days=1), "k-2", download(second, 0))
+    rebuild(raw, db_path)
+    report = load_captures(raw, db_path, cache)
+    assert (report["stored_runs"], report["stored_unplaced"]) == (2, 0)
+
+
 def test_malformed_records_are_counted_and_the_rest_still_loads(tmp_path):
     raw, db_path, cache = tmp_path / "raw", tmp_path / "h.sqlite", tmp_path / "capture-pcm"
     t0 = T.timestamp()
