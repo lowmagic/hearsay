@@ -168,8 +168,9 @@ def name_of(turns: list[dict], names: dict[str, str]) -> tuple[str | None, bool]
     return cluster_name([s["turn_id"] for s in voiced(turns)], names)
 
 
-# What isn't a person, one tap each (hearsay/stream.py leaves out all but _stranger).
-CATEGORIES = {"_media": "Media", "_music": "Music", "_noise": "Noise", "_stranger": "Stranger"}
+# What isn't a named person, one tap each. hearsay/stream.py leaves out all
+# but _stranger and _me: the owner, in turns their voice didn't give away.
+CATEGORIES = {"_me": "Me", "_media": "Media", "_music": "Music", "_noise": "Noise", "_stranger": "Stranger"}
 
 
 def category_buttons(hinted: str | None = None) -> str:
@@ -664,7 +665,7 @@ A clip that isn't this speaker (a cough, a video, someone else) can be tagged on
         if margins:
             margins = (f"<h2>Least like {html.escape(person)}</h2><p class='muted'>The turns that sound least like"
                        f" the rest. {len(unchecked)} not checked yet.</p>" + margins)
-        others = sorted(set(names.values()) | set(clips.values()) | {"_noise", "_media", "_stranger"})
+        others = sorted(set(names.values()) | set(clips.values()) | set(CATEGORIES))
         items = "".join(
             f"<li><a href='/cluster/{quote(c)}'>{len(grouped[c])} turns"
             f" <span class='muted'>· {len({s['conversation_id'] for s in grouped[c]})} conversation(s)</span></a></li>"

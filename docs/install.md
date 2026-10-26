@@ -238,9 +238,10 @@ tagged on its own, under its player: only that turn takes the tag. A named
 cluster can be renamed, or its name forgotten, from its page; a person can be
 renamed everywhere at once from theirs (renaming onto an existing name merges
 the two). Names starting with `_` are
-categories, not people: Media, Music, Noise and Stranger each have a button,
-on the cluster and under each clip (`_media` is TV or video talk, `_music`
-is songs, so the media hint learns from talk alone).
+categories, not people: Me, Media, Music, Noise and Stranger each have a button,
+on the cluster and under each clip (`_me` is you, where your voice wasn't
+recognized, and reaches the stream as yours; `_media` is TV or video talk,
+`_music` is songs, so the media hint learns from talk alone).
 
 The portal's Places page lists spots where the phone recorded and no named
 place is near (how long, which days, who was heard there, a map link); name

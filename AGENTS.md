@@ -22,7 +22,9 @@ recording, the turn was loud on the mic, so the owner's, or on the call, so
 someone else's), diarization (the turn took its label from its diarized
 speaker in the conversation, not its own voice) or none. Speaker kinds: owner, person (named), anonymous (labeled
 per conversation, e.g. "anon A"), stranger, unknown. `_noise`, `_media` and `_music`
-turns are left out (every category but `_stranger`); `_` names are categories, not people. Owner
+turns are left out (every category but `_stranger` and `_me`); `_` names are categories, not people.
+`_me` turns are the owner's, basis named (or diarization), where the operator
+heard the owner in turns their voice or channel gave to someone else. Owner
 utterances may also carry `affect` {arousal}: how calm or animated the owner
 sounded, about 0-1, from the audio alone (`hearsay/affect.py`); absent where
 the turn wasn't scored. Other people's tone is never inferred. They may also
