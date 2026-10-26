@@ -288,6 +288,24 @@ def test_people_heard_at_a_cluster_s_place_are_offered_for_one_tap(portal):
     assert (record["name"], record["via"], record["offered"]["place"]) == ("Sam", "place", ["Sam"])  # counted (hearsay/hints.py)
 
 
+def test_each_clip_shows_its_words_and_when_and_where_it_was_said(portal):
+    client, db_path, _ = portal
+    log_in(client)
+    db = sqlite3.connect(db_path)
+    cluster_a = db.execute("SELECT cluster FROM turn_people WHERE turn_id = 'a0'").fetchone()[0]
+    db.execute("UPDATE turns SET text = 'Pass the <salt>' WHERE turn_id = 'a0'")
+    # The conversation starts 2026-01-01 00:00 UTC; the owner moved on 20 s in.
+    db.execute("INSERT INTO conversation_places VALUES ('c1', 'Blind Monk', 1767225600, 1767225620)")
+    db.execute("INSERT INTO conversation_places VALUES ('c1', 'Home', 1767225620, 1767225640)")
+    db.commit()
+    db.close()
+
+    page = client.get(f"/cluster/{cluster_a}").text
+    assert "Pass the &lt;salt&gt;" in page
+    assert "4.0 s · Jan 1 00:00 UTC · Blind Monk" in page  # a0, at 0 s
+    assert "Jan 1 00:00 UTC · Home" in page  # a4, at 20 s
+
+
 def test_an_unnamed_cluster_offers_the_voices_it_sounds_most_like(portal):
     client, db_path, labels_dir = portal
     log_in(client)

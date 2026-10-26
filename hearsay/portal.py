@@ -76,9 +76,11 @@ SPOT_CONVERSATIONS = 10
 PLACE_CONVERSATIONS = 20
 OPENING_TURNS = 2
 OPENING_CHARACTERS = 200
+# A clip's words, shown with it so the operator knows which voice is meant.
+CLIP_CHARACTERS = 280
 
 CLUSTERS_SQL = """
-SELECT tp.turn_id, tp.cluster, tp.split, tp.fit, t.conversation_id, t.start, t.end, ca.wav_file, ca.zero_at
+SELECT tp.turn_id, tp.cluster, tp.split, tp.fit, t.conversation_id, t.start, t.end, t.text, ca.wav_file, ca.zero_at
 FROM turn_people tp
 JOIN turns t ON t.turn_id = tp.turn_id
 JOIN conversation_audio ca ON ca.conversation_id = t.conversation_id
@@ -100,6 +102,7 @@ input { font: inherit; width: 100%; box-sizing: border-box; padding: 0.6rem; }
 button { font: inherit; width: 100%; padding: 0.8rem; margin-top: 0.6rem; }
 .error { color: #c33; }
 .clip { margin-bottom: 1.2rem; }
+.words { margin: 0.2rem 0; }
 .clip input { padding: 0.4rem; }
 .clip button { padding: 0.4rem; margin-top: 0.3rem; }
 .row { display: flex; gap: 0.5rem; }
@@ -178,9 +181,15 @@ def category_buttons(hinted: str | None = None) -> str:
 
 def clip_player(s: dict, cluster_id: str, tagged: str | None = None, note: str = "", confirm: str | None = None,
                 back: str = "") -> str:
-    """A turn's audio, and a form to tag just that clip, take its tag back, or confirm it's `confirm`."""
+    """A turn's audio with its words, when and where it was said, and a form to
+    tag just that clip, take its tag back, or confirm it's `confirm`."""
+    words = s["text"] if len(s["text"]) <= CLIP_CHARACTERS else s["text"][:CLIP_CHARACTERS].rsplit(" ", 1)[0] + " …"
+    said = [f"{s['end'] - s['start']:.1f} s", f"{datetime.fromtimestamp(s['at'], timezone.utc):%b %-d %H:%M} UTC"]
+    said += [s["place"]] if s["place"] else []
+    said += [note] if note else []
     audio = (f"<audio controls preload='none' src='/audio/{quote(s['turn_id'])}'></audio>"
-             f"<div class='muted'>{s['end'] - s['start']:.1f} s{' · ' + html.escape(note) if note else ''}</div>")
+             f"<div class='words'>{html.escape(words)}</div>"
+             f"<div class='muted'>{html.escape(' · '.join(said))}</div>")
     hidden = (f"<input type='hidden' name='turn_id' value='{html.escape(s['turn_id'])}'>"
               + (f"<input type='hidden' name='back' value='{html.escape(back)}'>" if back else ""))
     form = f"<form class='clip' method='post' action='/cluster/{quote(cluster_id)}/clip'>{hidden}"
@@ -278,14 +287,23 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, user: str, pass
         return found.names, found.mixed, found.skipped, found.clips
 
     def load_clusters() -> dict[str, list[dict]]:
+        """Each cluster's turns, with when each was said (unix seconds) and the named place it was said at."""
         db = connect()
         db.row_factory = sqlite3.Row
         try:
             rows = [dict(r) for r in db.execute(CLUSTERS_SQL)]
+            places = {}
+            for conversation_id, place, start, end in db.execute(
+                    "SELECT conversation_id, place, start, end FROM conversation_places ORDER BY start"):
+                places.setdefault(conversation_id, []).append((place, start, end))
         finally:
             db.close()
         grouped = {}
         for row in rows:
+            row["at"] = datetime.fromisoformat(row["zero_at"]).timestamp() + row["start"]
+            # A place lasts until the next one starts (hearsay/places.py).
+            row["place"] = next((place for place, start, end in reversed(places.get(row["conversation_id"], []))
+                                 if start <= row["at"] <= end), None)
             grouped.setdefault(row["cluster"], []).append(row)
         return dict(sorted(grouped.items(), key=lambda item: (-len(item[1]), item[0])))
 

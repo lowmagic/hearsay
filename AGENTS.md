@@ -95,6 +95,14 @@ Guarantees consumers rely on (Idea Machine, `docs/ROADMAP.md` §3 there):
 
 ## Current slice
 
+Slice 18: review that shows what was said, and gates new matches (see the
+roadmap). Every clip in the portal shows its words, time and place. Next,
+voiceprints built only from the operator's input, and new matches to a
+named person gated in batches, where rejecting one keeps that speaker apart
+from them. Then slice 19 (turns kept without their audio) and slice 12
+(retention), which change the invariants on raw payloads and re-running
+from raw.
+
 Slice 17: how the owner holds a turn (see the roadmap). Owner utterances
 carry `delivery`, from Parakeet's word timings (`hearsay/delivery.py`):
 speaking rate, pauses, and stutters (repeats, restarts, fillers) each with the
@@ -125,9 +133,10 @@ upload, `hearsay/capture.py`), and each conversation in the stream lists the
 places the operator named that it happened at (`hearsay/places.py`,
 labels/places.jsonl), never coordinates.
 
-Slice 12 (retention) waits until the operator says the models are tuned:
-then audio past a rolling window (90 days to start) is deleted, and a
-forgotten span leaves the stream and is listed in `forgotten.json`.
+Slice 12 (retention) follows slices 18 and 19: then all audio past a
+rolling window (90 days to start) is deleted, the owner's too except the
+enrollment windows', and a forgotten span leaves the stream and is listed in
+`forgotten.json`.
 
 Slice 11 (Mac audio capture) is done: a menu-bar app on the operator's
 personal Mac records the mic and the call as separate channels, only after
@@ -136,9 +145,10 @@ Each turn is attributed by the channel it's loud on (`with_channel` in
 `hearsay/speakers.py`), unless the voice clearly says otherwise; a work
 machine is never used for capture or holds audio.
 
-Done when naming a cluster in the portal offers the people heard at that
-place first, and that measurably saves the operator time. Next: slice 12,
-retention, once the operator says the models are tuned.
+Slice 18 is done when the operator gates new matches in batches, rejected
+speakers stay apart from the person, and voiceprints come only from the
+operator's input. Slice 14 is done when naming a cluster offers the people
+heard at that place first, and that measurably saves the operator time.
 
 ## Coding standards
 
