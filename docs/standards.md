@@ -1,8 +1,9 @@
 # Coding standards
 
-Hearsay follows the [org standards](org-standards.md), an unchanged copy of
-[junglestyle's](https://github.com/junglestyle/.github/blob/main/code-standards/README.md). This file adds Hearsay's
-own rules and examples. Where it differs from an org rule, it says so, and it wins.
+Hearsay follows the [org standards](org-standards.md) and the org's [Python standards](org-standards-python.md),
+unchanged copies of [junglestyle's](https://github.com/junglestyle/.github/tree/main/code-standards). `.org-standards`
+lists the topics it copies beyond the general one. This file adds Hearsay's own rules and examples. Where it differs
+from an org rule, it says so, and it wins.
 
 ## YAGNI
 
@@ -40,11 +41,12 @@ own rules and examples. Where it differs from an org rule, it says so, and it wi
 
 ## Running it
 
-- `make check` runs everything CI runs except the org standards diff: the tests, in the `.venv` that
+- `make check` runs everything CI runs except the org standards check: the tests, in the `.venv` that
   `install/dev.sh` makes.
-- `make standards` diffs [org-standards.md](org-standards.md) against the org's current file, so a hand edit or a
-  stale copy fails. It needs the network, so it isn't part of `make check`; CI runs it as its own job.
-  `make sync-standards` refreshes the copy.
+- `make standards` checks [org-standards.md](org-standards.md) and each topic's copy against the org's current
+  files, so a hand edit, a stale copy, or a copy whose topic isn't in `.org-standards` fails. It needs the network,
+  so it isn't part of `make check`; CI runs it as its own job. `make sync-standards` refreshes the copies; to follow
+  another topic, add it to `.org-standards` and run it.
 - Install and deployment live in `install/`, one script per target, in the order [install.md](install.md) gives. The
   rules for those scripts are in [AGENTS.md](../AGENTS.md#installation).
 
@@ -60,3 +62,16 @@ own rules and examples. Where it differs from an org rule, it says so, and it wi
 
 - Overrides the org rule's "no dates" for a dated measurement that backs a constant (e.g. "Thresholds tuned on
   2026-09-27" in `hearsay/speakers.py`). It's evidence for the value, not history.
+
+## Known deviations
+
+Where Hearsay doesn't follow the [Python standards](org-standards-python.md) yet. These are debt to pay down, not
+overrides: each one should go.
+
+- Tooling: there's no `uv.lock` or `.python-version`. CI installs with `uv pip install -e ".[dev]"`, not
+  `uv sync --frozen`, and the dev tools are an extra, not a `dev` dependency group. It builds with setuptools, not
+  hatchling.
+- `make check` runs pytest only. Ruff and mypy aren't configured or run.
+- Images install with `pip`, and torch comes from the CPU index through `pip --index-url`, not `[tool.uv.sources]`.
+- Dependencies: the extras pin exactly (`==`). Only `transformers` in `transcribe` names the break its pin avoids.
+- Layout: the package is `hearsay/`, not `src/hearsay/`.
