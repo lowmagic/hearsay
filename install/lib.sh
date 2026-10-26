@@ -2,11 +2,9 @@
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# NAS layout (TrueNAS SCALE, NVMe pool "fast"). Hearsay lived on the
-# spinning pool "storage" until 2026-10; install/nas.sh moves it from there.
+# NAS layout (TrueNAS SCALE, NVMe pool "fast").
 NAS_POOL_DATASET="fast/hearsay"
 NAS_ROOT="/mnt/fast/hearsay"
-NAS_OLD_DATASET="storage/hearsay"
 NAS_REPO_DIR="/mnt/fast/repos/hearsay"
 NAS_CONFIG="$NAS_ROOT/config"
 NAS_RAW="$NAS_ROOT/raw"

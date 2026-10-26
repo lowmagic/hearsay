@@ -9,7 +9,6 @@ source "$(dirname "$0")/lib.sh"
 
 GPU_VENV="$HOME/.local/share/hearsay/gpu-venv"
 DEV_ENV="$HOME/.config/hearsay/dev.env"
-UNIT_DIR="$HOME/.config/systemd/user"
 CORRAL_CONFIG="$HOME/.config/corral"
 DIARIZATION_MODEL="pyannote/speaker-diarization-community-1"
 
@@ -80,13 +79,6 @@ then
     echo "kinds updated, worker restarted"
 fi
 echo "kinds in $CORRAL_CONFIG/kinds.d/hearsay.toml"
-# The hourly timer corral replaces.
-if [ -f "$UNIT_DIR/hearsay-transcribe.timer" ]; then
-    systemctl --user disable --now hearsay-transcribe.timer
-    rm -f "$UNIT_DIR/hearsay-transcribe.timer" "$UNIT_DIR/hearsay-transcribe.service"
-    systemctl --user daemon-reload
-    echo "removed: hourly transcription timer"
-fi
 # Linger keeps the user's corral worker running when you're not logged in.
 if ! loginctl show-user "$USER" -p Linger | grep -q yes; then
     loginctl enable-linger "$USER" || die "run: sudo loginctl enable-linger $USER, then re-run this"
