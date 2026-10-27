@@ -84,3 +84,8 @@ Where Hearsay doesn't follow the org standards yet. These are debt to pay down, 
 - Shell: `install/dev.sh`'s header doesn't say it's safe to re-run.
 - Shell: `install/ios.sh` puts the number the operator types into a `sed` program before checking it (`:64`, `:107`).
 - Shell: `make check` doesn't run shellcheck, which reports 29 findings.
+- Docs: there's no `docs/SPEC.md`, so what Hearsay is meant to do is spread across the [roadmap](roadmap.md)'s slices.
+  The roadmap is `roadmap.md`, not `ROADMAP.md`.
+- Deployment repos: [install.md](install.md), the [roadmap](roadmap.md) and [AGENTS.md](../AGENTS.md) name
+  `/mnt/fast/...` paths, the `fast/hearsay` and `fast/repos` datasets, and `ssh nas`. These facts belong in a future
+  `hearsay-deployment` repo, and the Privacy override above goes with them.
