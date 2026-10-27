@@ -1,6 +1,7 @@
 # Coding standards
 
-Hearsay follows the [org standards](org-standards.md) and the org's [Python standards](org-standards-python.md),
+Hearsay follows the [org standards](org-standards.md) and the org's standards for [Python](org-standards-python.md),
+[SQL](org-standards-sql.md), [containers](org-standards-containers.md) and [shell scripts](org-standards-shell.md),
 unchanged copies of [junglestyle's](https://github.com/junglestyle/.github/tree/main/code-standards). `.org-standards`
 lists the topics it copies beyond the general one. This file adds Hearsay's own rules and examples. Where it differs
 from an org rule, it says so, and it wins.
@@ -18,7 +19,8 @@ from an org rule, it says so, and it wins.
 ## Errors and recovery
 
 - Code never handles a database older than itself: the database is rebuilt from raw, so a missing table or column is a
-  real failure, not one to work around.
+  real failure, not one to work around. That overrides the Python standards' numbered migrations: a schema change ships
+  with the code, and the next reprocess rebuilds the database.
 - Errors never pass silently on the unattended clients either: the iPhone and Mac apps surface any error that loses
   audio where the operator will see it, not just in a log.
 
@@ -71,3 +73,14 @@ Where Hearsay doesn't follow the org standards yet. These are debt to pay down, 
 - Dependencies: FastAPI has no recorded decision saying what it gives. The [roadmap](roadmap.md)'s first slice only
   names it.
 - Structure: `STORED_AUDIO` in `hearsay/capture.py` is never read.
+- SQL: closed sets (`turns.kind` and others) are comments, with no `CHECK` and no `StrEnum`.
+- SQL: the schema declares 17 foreign keys, and no connection turns them on.
+- SQL: the portal and the label and transcribe tools read the database while `reprocess` writes it, and it isn't in WAL.
+- Errors: a missing `HEARSAY_DB` raises `KeyError`, not `SystemExit`.
+- Containers: `python:3.12-slim` doesn't name the Debian release.
+- Containers: the `Dockerfile` has no `USER`; compose sets `568:568`.
+- Shell: `install/lib.sh` is executable and doesn't start with `# shellcheck shell=bash`.
+- Shell: `install/ios.sh`'s `devices_json` removes its temp file without a trap.
+- Shell: `install/dev.sh`'s header doesn't say it's safe to re-run.
+- Shell: `install/ios.sh` puts the number the operator types into a `sed` program before checking it (`:64`, `:107`).
+- Shell: `make check` doesn't run shellcheck, which reports 29 findings.
