@@ -58,10 +58,10 @@ SETTINGS = {
     # 18 real conversations (2026-10-01), 0.6 cut operator-tagged speech under
     # the wrong name from 49 s to 9 s and owner speech sharing a speaker with
     # others from 260 s to 126 s, split the dinner into the three voices
-    # people.voices() hears, and left clean conversations' speaker counts
+    # the speaker model hears, and left clean conversations' speaker counts
     # alone. The clustering threshold (0.5) also merged two people, and Fa
-    # past 0.09 shatters speakers. Over-splitting is cheap: people.py
-    # re-merges a person split across speakers.
+    # past 0.09 shatters speakers. Over-splitting costs little: one person
+    # under two labels in a conversation, never the owner's voice lost.
     "diarization_Fb": 0.6,
 }
 # Parakeet transcribes a conversation in pieces of at most this long, cut in
