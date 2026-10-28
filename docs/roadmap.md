@@ -230,6 +230,9 @@ in `mac/`); calls under 30 s of speech are dropped like any conversation.
 
 ## 12. Retention
 
+Held 2026-10-28 until Idea Machine's M2 validates me / not me: raw audio is
+the rollback for its re-link of segments.
+
 Delete non-owner audio after embedding and transcription. Starts only
 once the models are tuned (diarization, voice thresholds, clustering): until
 then all audio is kept, because deleted audio can't be re-embedded or
@@ -351,6 +354,10 @@ for a place or a spot.
 
 ## 14. Place as a hint for who is speaking
 
+Shelved 2026-10-28, its code removed: Hearsay says only whether the owner
+spoke and names nobody else, so there is no name for a place to suggest. Kept as the record of what was
+measured.
+
 People are tied to places (the bartender at the Chill Room, a coworker at
 the office), and operator names already carry them ("Robert (Chill Room)").
 Use where a conversation happened to suggest who an unnamed speaker is: in
@@ -380,6 +387,10 @@ hearsay/hints.py like the others; its undo rate is the guard against a tap
 merging two people.
 
 ## 15. Media hint
+
+Shelved 2026-10-28, its code removed: Hearsay says only whether the owner
+spoke and names nobody else, so there are no clusters to offer `_media` on; the operator tags media one turn at a time. Kept as the record of what was
+measured.
 
 TV and video dialogue is a large share of other voices (on 2026-10-07, 85 of
 346 minutes were tagged `_media`), and each evening of it is tagged by hand.
@@ -510,6 +521,10 @@ left out (the tracker is noisy at word ends).
 
 ## 18. Review that shows what was said, and gates new matches
 
+Shelved 2026-10-28, its code removed: Hearsay says only whether the owner
+spoke and names nobody else, so there are no matches to a named person to gate. Clips showing their words, time and place (done 2026-10-25) carried over to the portal's list of turns Hearsay couldn't decide. Kept as the record of what was
+measured.
+
 The operator names speakers by ear, but a clip alone doesn't say which voice
 is meant when several talk, and a wrong place goes unnoticed. And once a
 cluster is named, everything that later joins it takes the name unseen: a
@@ -593,8 +608,8 @@ Decided 2026-10-26:
   payloads, conversation WAVs, the decoded audio and embedding cache, the
   transcription output, and the NAS's nightly snapshots once they expire.
 
-Comes after slice 18 and before 19 and 12: it needs neither, and it is
-the only way to keep something from Claude until then.
+Comes before 19 and 12: it needs neither, and it is the only way to keep
+something from Claude until then.
 
 Done when: the operator reviews a week of conversations on the page,
 thrown-out stretches never reach Idea Machine, and the rest arrives on

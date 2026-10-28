@@ -9,7 +9,6 @@ from hearsay.delivery import SCHEMA as DELIVERY_SCHEMA
 from hearsay.capture import ACTIVITY, LOCATION, MOVEMENT, ROUTE
 from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
 from hearsay.parse import rebuild
-from hearsay.people import SCHEMA as PEOPLE_SCHEMA
 from hearsay.places import find_places
 from hearsay.speakers import SCHEMA as SPEAKERS_SCHEMA
 from hearsay.stream import write_stream
@@ -36,7 +35,7 @@ def test_a_conversation_lists_the_named_places_it_happened_at(tmp_path):
     upload(raw, T + timedelta(minutes=20), "k-places", b"".join(readings))
     rebuild(raw, db_path)
     db = sqlite3.connect(db_path)
-    db.executescript(ASSEMBLE_SCHEMA + CONVERSATIONS_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + PEOPLE_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA)
+    db.executescript(ASSEMBLE_SCHEMA + CONVERSATIONS_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA)
     db.execute("INSERT INTO conversations VALUES ('c1', ?, ?, 600, 0)", (t0, t0 + 1200))
     db.execute("INSERT INTO conversations VALUES ('c2', ?, ?, 60, 0)", (t0 + 7200, t0 + 7300))  # no readings
     db.commit()
@@ -44,7 +43,7 @@ def test_a_conversation_lists_the_named_places_it_happened_at(tmp_path):
     (labels / "places.jsonl").write_text("".join(json.dumps(r) + "\n" for r in [
         {"type": "place", "name": "Chill", "latitude": BAR[0], "longitude": BAR[1]},
         {"type": "place", "name": "home", "latitude": HOME[0], "longitude": HOME[1]},
-        {"type": "rename", "from": "Chill", "to": "Chill Room"},  # retroactive, like people's names
+        {"type": "rename", "from": "Chill", "to": "Chill Room"},  # retroactive
     ]))
 
     find_places(db_path, labels)
@@ -73,7 +72,7 @@ def test_staying_put_keeps_the_place_without_fresh_fixes(tmp_path):
     upload(raw, T + timedelta(hours=3), "k-stay", b"".join(readings))
     rebuild(raw, db_path)
     db = sqlite3.connect(db_path)
-    db.executescript(ASSEMBLE_SCHEMA + CONVERSATIONS_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + PEOPLE_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA)
+    db.executescript(ASSEMBLE_SCHEMA + CONVERSATIONS_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA)
     db.execute("INSERT INTO conversations VALUES ('c1', ?, ?, 600, 0)", (t0 + 7200, t0 + 7800))  # two hours in
     db.commit()
     db.close()

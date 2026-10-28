@@ -3,14 +3,17 @@
 Written after every reprocess from the database, one JSONL file per
 conversation plus index.json. Consumers never receive audio.
 
-Everything here can change after the fact (a name given to a speaker applies
-to past turns, a growing conversation is re-transcribed), so the unit of
+Everything here can change after the fact (the operator's correction of who
+spoke applies to past turns, a growing conversation is re-transcribed), so the unit of
 change is a conversation, not an utterance. index.json gives each
 conversation a revision (a hash of its file); consumers re-read the
 conversations whose revision changed and replace them wholesale. utterance_id
 is stable only while a conversation's transcript is, which transcript_revision
 tracks: it hashes the turns as transcribed (times, words, diarized voices),
-never who they were attributed to, so naming leaves it alone.
+never who they were attributed to, so corrections leave it alone.
+
+Speakers are the owner or not: since 2026-10-28 Hearsay names nobody else,
+so `person` is never written, though it stays a valid kind for consumers.
 
 Files are written atomically and the index last, so a reader never sees a
 half-written file, and a file is only rewritten when its content changes.
@@ -26,16 +29,17 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from hearsay.turns import categories
+
 # Bump on any change to the index or utterance format that would break a consumer.
 FORMAT_VERSION = 1
 
 UTTERANCES_SQL = """
 SELECT t.conversation_id, t.idx, t.start, t.end, t.text, t.diar_speaker, t.confidence,
-       ts.label, ts.basis, ts.owner_similarity, tp.person, tp.cluster, ca.zero_at, ta.arousal,
+       ts.label, ts.basis, ts.owner_similarity, ca.zero_at, ta.arousal,
        td.words_per_second, td.pauses, td.pause_seconds, t.turn_id
 FROM turns t
 JOIN turn_speakers ts ON ts.turn_id = t.turn_id
-LEFT JOIN turn_people tp ON tp.turn_id = t.turn_id
 LEFT JOIN turn_affect ta ON ta.turn_id = t.turn_id
 LEFT JOIN turn_delivery td ON td.turn_id = t.turn_id
 JOIN conversation_audio ca ON ca.conversation_id = t.conversation_id
@@ -47,13 +51,13 @@ def iso(seconds: float) -> str:
     return datetime.fromtimestamp(seconds, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def speaker_kind(label: str | None, person: str | None, basis: str | None) -> tuple[str, str | None, str] | None:
+def speaker_kind(label: str | None, category: str | None, basis: str | None) -> tuple[str, str | None, str] | None:
     """(kind, name, basis), or None for turns left out of the stream.
 
-    Names starting with "_" are the operator's categories, not people.
-    _stranger is someone present, so it stays; _me is the owner, in turns
-    their voice or channel said were someone else's; every other category
-    (_noise, _media, _music) is not speech from anyone present and is left out.
+    Categories (hearsay/turns.py) are the operator's: _stranger is someone
+    present, so it stays; _me is the owner, in turns their voice or channel
+    said were someone else's; every other category (_noise, _media, _music)
+    is not speech from anyone present and is left out.
 
     A turn labeled by its diarized speaker rather than its own voice
     (hearsay/speakers.py) says so: its basis is "diarization", whatever the
@@ -61,21 +65,21 @@ def speaker_kind(label: str | None, person: str | None, basis: str | None) -> tu
     recording it was loud on, except a turn the operator says is theirs:
     that channel said it was the call's.
     """
-    found = speaker_from_label(label, person)
-    if found and (basis == "diarization" or basis == "channel" and person != "_me"):
+    found = speaker_from_label(label, category)
+    if found and (basis == "diarization" or basis == "channel" and category != "_me"):
         return found[0], found[1], basis
     return found
 
 
-def speaker_from_label(label: str | None, person: str | None) -> tuple[str, str | None, str] | None:
+def speaker_from_label(label: str | None, category: str | None) -> tuple[str, str | None, str] | None:
+    if category == "_me":
+        return "owner", None, "named"
+    if category == "_stranger":
+        return "stranger", None, "named"
+    if category:
+        return None
     if label == "owner":
         return "owner", None, "voice"
-    if person == "_me":
-        return "owner", None, "named"
-    if person and person.startswith("_"):
-        return ("stranger", None, "named") if person == "_stranger" else None
-    if person:
-        return "person", person, "named"
     if label == "not_owner":
         return "anonymous", None, "cluster"
     return "unknown", None, "none"
@@ -98,20 +102,20 @@ def utterances(db: sqlite3.Connection) -> dict[str, list[dict]]:
         "SELECT turn_id, at, kind, words_per_second_before, word FROM turn_stutters ORDER BY turn_id, at"
     ):
         stutters.setdefault(turn_id, []).append((at, kind, before, word))
+    tagged = categories(db)
     labels = {}  # (conversation, kind, voice) -> "anon A" / "stranger A"
     for (conversation_id, idx, start, end, text, diar_speaker, confidence,
-         label, basis, similarity, person, cluster, zero_at, arousal,
+         label, basis, similarity, zero_at, arousal,
          words_per_second, pauses, pause_seconds, turn_id) in db.execute(UTTERANCES_SQL):
-        speaker = speaker_kind(label, person, basis)
+        speaker = speaker_kind(label, tagged.get(turn_id), basis)
         if speaker is None:
             continue
         kind, name, basis = speaker
         speaker_label = None
         if kind in ("anonymous", "stranger"):
             # Diarization tells voices apart within a conversation; turns it
-            # didn't assign fall back to their cluster.
-            voice = diar_speaker or cluster
-            key = (conversation_id, kind, voice)
+            # didn't assign share one label.
+            key = (conversation_id, kind, diar_speaker)
             if key not in labels:
                 count = sum(1 for c, k, _ in labels if c == conversation_id and k == kind)
                 labels[key] = f"{'anon' if kind == 'anonymous' else 'stranger'} {letters(count)}"
