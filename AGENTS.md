@@ -146,10 +146,10 @@ machine is never used for capture or holds audio.
 ## Coding standards
 
 Code, tests, comments and prose follow [docs/standards.md](docs/standards.md),
-which builds on the org's [docs/org-standards.md](docs/org-standards.md) and
+which builds on the org's [principles](https://github.com/junglestyle/.github/blob/main/PRINCIPLES.md), [docs/org-standards.md](docs/org-standards.md) and
 the copy of each topic listed in `.org-standards`, such as
 [docs/org-standards-python.md](docs/org-standards-python.md).
-`make check` runs everything CI runs except the org standards check.
+Run `make check` before committing; it runs everything CI runs except the org standards check.
 
 ## Installation
 
