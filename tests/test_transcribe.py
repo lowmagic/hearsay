@@ -1,4 +1,4 @@
-from hearsay.transcribe import PIECE_SECONDS, label_segments, pieces
+from hearsay.transcribe import PIECE_SECONDS, chunk, label_segments, pieces
 from hearsay.turns import split_turns
 
 
@@ -31,3 +31,17 @@ def test_words_go_to_the_speaker_they_overlap_and_become_turns():
     assert [(t["speaker"], " ".join(t["words"])) for t in turns] == [("SPEAKER_00", "Hello there."),
                                                                       ("SPEAKER_01", "Hi! Bye.")]
     assert turns[0]["scores"] == [0.9, 0.8]
+
+
+def test_a_chunk_takes_conversations_until_their_audio_fills_the_hint():
+    todo = [{"conversation_id": c, "duration": d} for c, d in [("a", 400.0), ("b", 300.0), ("c", 50.0)]]
+
+    assert [r["conversation_id"] for r in chunk(todo, 750.0)] == ["a", "b", "c"]
+    assert [r["conversation_id"] for r in chunk(todo, 700.0)] == ["a", "b"]
+    # Stops at the first that doesn't fit, so oldest go first.
+    assert [r["conversation_id"] for r in chunk(todo, 600.0)] == ["a"]
+    # A conversation longer than the hint still goes, alone.
+    assert [r["conversation_id"] for r in chunk(todo, 60.0)] == ["a"]
+    # No hint (run by hand, or no history yet): everything.
+    assert chunk(todo, None) == todo
+    assert chunk([], 60.0) == []
