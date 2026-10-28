@@ -1,5 +1,5 @@
 """Rebuild everything derived from raw: database, conversations, conversation
-audio, turns, speaker labels, people, and the utterance stream.
+audio, turns, speaker labels, and the utterance stream.
 
 Turns come from transcripts the dev box makes of each WAV (hearsay/transcribe.py),
 so new audio takes a reprocess, a transcription run, then another reprocess.
@@ -28,7 +28,7 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
-from hearsay import conversations, people, speakers
+from hearsay import conversations, speakers
 from hearsay.assemble import assemble, remove_stale_wavs
 from hearsay.cache import Cache
 from hearsay.capture import load_captures
@@ -37,8 +37,6 @@ from hearsay.imports import load_imports
 from hearsay.parse import ParseFailed, rebuild
 from hearsay.affect import score_affect
 from hearsay.delivery import measure_delivery
-from hearsay.media import score_media
-from hearsay.people import group_people
 from hearsay.places import find_places
 from hearsay.speakers import label_speakers
 from hearsay.stream import write_stream
@@ -68,12 +66,10 @@ def run(raw_dir: Path, db_path: Path, audio_dir: Path, labels_dir: Path, model_d
         report("Where conversations happened:", find_places(staging, labels_dir))
         report(f"Assembled conversation audio in {audio_dir}:", assemble(raw_dir, staging, audio_dir))
         report(f"Turns from transcripts in {transcripts_dir}:", build_turns(staging, transcripts_dir))
-        report("Operator labels and names, matched to turns:", record_operator_input(staging, labels_dir))
+        report("Operator labels and tags, matched to turns:", record_operator_input(staging, labels_dir))
         report("Speaker embeddings and labels:", label_speakers(raw_dir, staging, labels_dir, model_dir, cache))
         report("The owner's tone of voice:", score_affect(raw_dir, staging, affect_model_dir, cache))
         report("How the owner delivered their turns:", measure_delivery(staging, transcripts_dir))
-        report("Anonymous speakers and names:", group_people(staging))
-        report("Media hints, learned from the operator's tags:", score_media(staging))
         record_run(staging)
         report(f"Updated {db_path} in place:", update_in_place(staging, db_path))
     finally:
@@ -151,7 +147,6 @@ def record_run(db_path: Path) -> None:
         "owner_threshold": speakers.OWNER_THRESHOLD,
         "not_owner_threshold": speakers.NOT_OWNER_THRESHOLD,
         "diarization_agreement": speakers.DIARIZATION_AGREEMENT,
-        "cluster_threshold": people.CLUSTER_THRESHOLD,
     }
     db = sqlite3.connect(db_path)
     try:

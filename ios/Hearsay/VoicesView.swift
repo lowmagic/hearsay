@@ -1,9 +1,9 @@
 import SwiftUI
 import WebKit
 
-/// Naming speakers: the NAS's portal (hearsay/portal.py), which already
-/// plays each cluster's samples and applies names. Shown here rather than
-/// rebuilt, so there is one place where naming works. The portal is on the
+/// Correcting who spoke: the NAS's portal (hearsay/portal.py), which already
+/// plays the turns Hearsay could not decide, to tag. Shown here rather than
+/// rebuilt, so there is one place where tagging works. The portal is on the
 /// tailnet only, so the samples never leave Hearsay's boundary.
 ///
 /// The app logs in with the capture token from Settings, whenever the portal

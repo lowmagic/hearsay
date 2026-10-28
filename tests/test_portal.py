@@ -1,9 +1,7 @@
 import io
 import json
-import random
 import sqlite3
 import wave
-from array import array
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,22 +10,15 @@ pytest.importorskip("numpy")
 
 from hearsay.assemble import SCHEMA as ASSEMBLE_SCHEMA  # noqa: E402
 from hearsay.parse import SCHEMA as PARSE_SCHEMA  # noqa: E402
-from hearsay.media import SCHEMA as MEDIA_SCHEMA  # noqa: E402
-from hearsay.people import group_people  # noqa: E402
 from hearsay.places import SCHEMA as PLACES_SCHEMA, read_places  # noqa: E402
 from hearsay.portal import create_app  # noqa: E402
 from hearsay.speakers import SCHEMA as SPEAKERS_SCHEMA  # noqa: E402
 from hearsay.turns import SCHEMA as TURNS_SCHEMA, record_operator_input  # noqa: E402
 
 
-def unit(vector):
-    norm = sum(x * x for x in vector) ** 0.5
-    return [x / norm for x in vector]
-
-
 @pytest.fixture
 def portal(tmp_path):
-    """Two not-owner voices, four 4 s turns each, in one conversation WAV."""
+    """Eight 4 s turns in one conversation WAV: Hearsay couldn't tell who said the a turns, the b turns aren't the owner."""
     db_path, audio_dir, labels_dir = tmp_path / "h.sqlite", tmp_path / "audio", tmp_path / "labels"
     audio_dir.mkdir()
     labels_dir.mkdir()
@@ -38,30 +29,22 @@ def portal(tmp_path):
         w.setframerate(16000)
         w.writeframes(b"".join(sec.to_bytes(2, "little") * 16000 for sec in range(40)))
 
-    rng = random.Random(0)
-    voices = [unit([rng.gauss(0, 1) for _ in range(192)]) for _ in range(2)]
     db = sqlite3.connect(db_path)
-    db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + PLACES_SCHEMA + MEDIA_SCHEMA)
+    db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + PLACES_SCHEMA)
     db.execute("INSERT INTO conversation_audio VALUES ('c1', '2026-01-01T00:00:00+00:00', 40, 1, 'c1.wav', 'sha')")
     for idx in range(8):
         turn_id = f"{'ab'[idx % 2]}{idx}"
         db.execute("INSERT INTO turns VALUES (?,?,?,?,?,?,?,?)",
                    (turn_id, "c1", idx, 5.0 * idx, 5.0 * idx + 4, "synthetic", None, None))
-        vector = unit([x + rng.gauss(0, 0.04) for x in voices[idx % 2]])
+        label = (None, "not_owner")[idx % 2]
         db.execute("INSERT INTO turn_speakers VALUES (?,?,?,?,?,?,?)",
-                   (turn_id, "c1", 1.0, array("f", vector).tobytes(), 0.0, "not_owner", "voice"))
+                   (turn_id, "c1", 1.0, None, 0.2 if label is None else 0.05, label, "voice" if label else None))
     db.commit()
     db.close()
-    reprocess_people(db_path, labels_dir)
+    record_operator_input(db_path, labels_dir)
 
     app = create_app(db_path, audio_dir, labels_dir, "me", "correct horse", "k" * 64, app_token="capture-token")
     return TestClient(app), db_path, labels_dir
-
-
-def reprocess_people(db_path, labels_dir):
-    """The reprocess steps that apply the operator's tags."""
-    record_operator_input(db_path, labels_dir)
-    group_people(db_path)
 
 
 def log_in(client):
@@ -93,27 +76,6 @@ def test_the_app_logs_in_with_the_capture_token(portal):
     assert client.get("/", follow_redirects=False).status_code == 200
 
 
-def test_naming_in_the_portal_names_the_whole_cluster_after_reprocess(portal):
-    client, db_path, labels_dir = portal
-    log_in(client)
-    db = sqlite3.connect(db_path)
-    cluster_a = db.execute("SELECT cluster FROM turn_people WHERE turn_id = 'a0'").fetchone()[0]
-    db.close()
-
-    response = client.post(f"/cluster/{cluster_a}", data={"action": "name", "name": "  Alice  "}, follow_redirects=False)
-    assert response.status_code == 303
-    [record] = [json.loads(line) for line in (labels_dir / "tags.jsonl").read_text().splitlines()]
-    assert record["name"] == "Alice" and len(record["at"]) == 3
-    assert "Alice" in client.get("/").text  # applied immediately, before any reprocess
-
-    reprocess_people(db_path, labels_dir)
-    db = sqlite3.connect(db_path)
-    people = dict(db.execute("SELECT turn_id, person FROM turn_people"))
-    db.close()
-    assert {people[s] for s in ["a0", "a2", "a4", "a6"]} == {"Alice"}
-    assert {people[s] for s in ["b1", "b3", "b5", "b7"]} == {None}
-
-
 def test_turn_audio_supports_byte_ranges_for_ios(portal):
     client, _, _ = portal
     log_in(client)
@@ -127,108 +89,6 @@ def test_turn_audio_supports_byte_ranges_for_ios(portal):
     assert probe.status_code == 206
     assert probe.content == full.content[:2]
     assert probe.headers["content-range"] == f"bytes 0-1/{len(full.content)}"
-
-
-def test_skipped_clusters_go_to_the_back_of_the_queue(portal):
-    client, db_path, labels_dir = portal
-    log_in(client)
-    db = sqlite3.connect(db_path)
-    cluster = dict(db.execute("SELECT turn_id, cluster FROM turn_people"))
-    db.close()
-    first, second = cluster["a0"], cluster["b1"]
-
-    skipped = client.post(f"/cluster/{first}", data={"action": "skip"}, follow_redirects=False)
-    assert skipped.headers["location"] == f"/cluster/{second}"
-    index = client.get("/").text
-    assert index.index("Skipped (1)") < index.index(f"/cluster/{first}")
-
-    named = client.post(f"/cluster/{second}", data={"action": "name", "name": "Bob"}, follow_redirects=False)
-    assert named.headers["location"] == f"/cluster/{first}"  # comes round again once the rest is done
-
-
-def test_forgetting_a_name_unnames_the_cluster(portal):
-    client, db_path, labels_dir = portal
-    log_in(client)
-    db = sqlite3.connect(db_path)
-    cluster_a = db.execute("SELECT cluster FROM turn_people WHERE turn_id = 'a0'").fetchone()[0]
-    db.close()
-
-    client.post(f"/cluster/{cluster_a}", data={"action": "name", "name": "Alice"})
-    client.post(f"/cluster/{cluster_a}", data={"action": "forget"})
-    assert "To name (2)" in client.get("/").text
-
-    reprocess_people(db_path, labels_dir)
-    db = sqlite3.connect(db_path)
-    assert db.execute("SELECT DISTINCT person FROM turn_people").fetchall() == [(None,)]
-    db.close()
-
-
-def test_renaming_a_person_renames_every_cluster_at_once(portal):
-    client, db_path, labels_dir = portal
-    log_in(client)
-    db = sqlite3.connect(db_path)
-    clusters = [c for (c,) in db.execute("SELECT DISTINCT cluster FROM turn_people ORDER BY cluster")]
-    db.close()
-    assert len(clusters) == 2
-    for c in clusters:
-        client.post(f"/cluster/{c}", data={"action": "name", "name": "Media"})
-
-    renamed = client.post("/person/Media", data={"name": "_media"}, follow_redirects=False)
-    assert renamed.headers["location"] == "/person/_media"
-    index = client.get("/").text
-    assert "People (1)" in index and "_media" in index and ">Media<" not in index
-    assert "2 cluster(s)" in client.get("/person/_media").text
-
-    reprocess_people(db_path, labels_dir)
-    db = sqlite3.connect(db_path)
-    # A category takes only the turns tagged with it, so the turns the
-    # cluster pages didn't sample come back to be named.
-    assert db.execute("SELECT DISTINCT person FROM turn_people ORDER BY 1").fetchall() == [(None,), ("_media",)]
-    db.close()
-
-
-def test_a_cluster_the_operator_says_is_them_is_the_owners(portal):
-    client, db_path, labels_dir = portal
-    log_in(client)
-    db = sqlite3.connect(db_path)
-    cluster_a = db.execute("SELECT cluster FROM turn_people WHERE turn_id = 'a0'").fetchone()[0]
-    db.close()
-
-    assert "value='_me' formnovalidate>Me</button>" in client.get(f"/cluster/{cluster_a}").text
-    client.post(f"/cluster/{cluster_a}", data={"category": "_me"})
-    reprocess_people(db_path, labels_dir)
-    db = sqlite3.connect(db_path)
-    people = dict(db.execute("SELECT turn_id, person FROM turn_people"))
-    db.close()
-    assert {people[f"a{i}"] for i in (0, 2, 4, 6)} == {"_me"}
-
-    # Any category can take a person's place everywhere, the owner too.
-    known = client.get("/person/_me").text
-    assert all(f"<option value='{c}'>" in known for c in ("_media", "_music", "_noise", "_stranger"))
-
-
-def test_a_clip_tagged_on_its_own_keeps_its_tag_and_leaves_the_cluster_alone(portal):
-    client, db_path, labels_dir = portal
-    log_in(client)
-    db = sqlite3.connect(db_path)
-    cluster_a = db.execute("SELECT cluster FROM turn_people WHERE turn_id = 'a0'").fetchone()[0]
-    db.close()
-
-    # A cough in Alice's speaker, and a clip that turns out to be someone else.
-    client.post(f"/cluster/{cluster_a}/clip", data={"turn_id": "a0", "name": "_noise"})
-    client.post(f"/cluster/{cluster_a}/clip", data={"turn_id": "a2", "name": "Bob"})
-    assert "To name (2)" in client.get("/").text  # a clip doesn't name its cluster
-    page = client.get(f"/cluster/{cluster_a}").text
-    assert "/audio/a6" in page and "_noise" in page  # a fresh sample takes the clip's place
-    client.post(f"/cluster/{cluster_a}/clip", data={"turn_id": "a2"})  # taken back
-    client.post(f"/cluster/{cluster_a}", data={"action": "name", "name": "Alice"})
-
-    reprocess_people(db_path, labels_dir)
-    db = sqlite3.connect(db_path)
-    people = dict(db.execute("SELECT turn_id, person FROM turn_people"))
-    db.close()
-    assert people["a0"] == "_noise"
-    assert {people[s] for s in ["a2", "a4", "a6"]} == {"Alice"}
 
 
 def test_a_spot_where_the_owner_spent_time_can_be_named(portal):
@@ -285,34 +145,10 @@ def test_a_spot_where_the_owner_spent_time_can_be_named(portal):
     assert client.get("/places.json", headers=app).json()["visits"] == {}
 
 
-def test_people_heard_at_a_cluster_s_place_are_offered_for_one_tap(portal):
-    client, db_path, labels_dir = portal
-    log_in(client)
-    db = sqlite3.connect(db_path)
-    cluster_a, cluster_b = (db.execute("SELECT cluster FROM turn_people WHERE turn_id = ?", (t,)).fetchone()[0]
-                            for t in ("a0", "b1"))
-    db.close()
-    assert "Heard at" not in client.get(f"/cluster/{cluster_a}").text  # no place yet, no hint
-
-    client.post(f"/cluster/{cluster_b}", data={"action": "name", "name": "Peggy"})
-    reprocess_people(db_path, labels_dir)
-    db = sqlite3.connect(db_path)
-    db.execute("INSERT INTO conversation_places VALUES ('c1', 'Blind Monk', 0, 40)")
-    db.commit()
-    db.close()
-
-    page = client.get(f"/cluster/{cluster_a}").text
-    assert "Heard at Blind Monk" in page and "name='suggested' value='Peggy'" in page
-    client.post(f"/cluster/{cluster_a}", data={"suggested": "Peggy"})
-    record = json.loads((labels_dir / "tags.jsonl").read_text().splitlines()[-1])
-    assert (record["name"], record["via"], record["offered"]["place"]) == ("Peggy", "place", ["Peggy"])  # counted (hearsay/hints.py)
-
-
 def test_each_clip_shows_its_words_and_when_and_where_it_was_said(portal):
     client, db_path, _ = portal
     log_in(client)
     db = sqlite3.connect(db_path)
-    cluster_a = db.execute("SELECT cluster FROM turn_people WHERE turn_id = 'a0'").fetchone()[0]
     db.execute("UPDATE turns SET text = 'Pass the <salt>' WHERE turn_id = 'a0'")
     # The conversation starts 2026-01-01 00:00 UTC; the owner moved on 20 s in.
     db.execute("INSERT INTO conversation_places VALUES ('c1', 'Blind Monk', 1767225600, 1767225620)")
@@ -320,46 +156,43 @@ def test_each_clip_shows_its_words_and_when_and_where_it_was_said(portal):
     db.commit()
     db.close()
 
-    page = client.get(f"/cluster/{cluster_a}").text
+    page = client.get("/").text
     assert "Pass the &lt;salt&gt;" in page
     assert "4.0 s · Jan 1 00:00 UTC · Blind Monk" in page  # a0, at 0 s
     assert "Jan 1 00:00 UTC · Home" in page  # a4, at 20 s
 
 
-def test_an_unnamed_cluster_offers_the_voices_it_sounds_most_like(portal):
+def test_turns_hearsay_couldnt_decide_are_offered_and_the_operator_s_tag_decides(portal):
+    from hearsay.stream import write_stream
+    from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
+    from hearsay.affect import SCHEMA as AFFECT_SCHEMA
+    from hearsay.delivery import SCHEMA as DELIVERY_SCHEMA
+
     client, db_path, labels_dir = portal
     log_in(client)
+    page = client.get("/").text
+    assert "4 turn(s)" in page and "/audio/a6" in page and "/audio/b1" not in page  # only the a turns
+    assert page.index("/audio/a6") < page.index("/audio/a0")  # latest first
+
+    client.post("/turn", data={"turn_id": "a0", "category": "_me"})
+    client.post("/turn", data={"turn_id": "a2", "category": "_stranger"})
+    client.post("/turn", data={"turn_id": "a4", "category": "Alice"})  # not a category: ignored
+    page = client.get("/").text
+    assert "2 turn(s)" in page and "/audio/a0" not in page  # gone as soon as it's tagged
+    [me, stranger] = [json.loads(line) for line in (labels_dir / "tags.jsonl").read_text().splitlines()]
+    assert (me["type"], me["name"], me["at"]) == ("clip", "_me", [["2026-01-01T00:00:00+00:00", "2026-01-01T00:00:04+00:00"]])
+
     db = sqlite3.connect(db_path)
-    cluster_a = db.execute("SELECT cluster FROM turn_people WHERE turn_id = 'a0'").fetchone()[0]
-    db.execute("INSERT INTO cluster_voices VALUES (?, 'Peggy', 0.33)", (cluster_a,))  # as reprocess finds it
+    db.executescript(CONVERSATIONS_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA)
+    db.execute("DELETE FROM operator_input")
+    db.execute("INSERT INTO conversations VALUES ('c1', 1767225600, 1767225640, 32, 0)")
     db.commit()
     db.close()
-
-    page = client.get(f"/cluster/{cluster_a}").text
-    assert "Sounds most like" in page and "name='voice' value='Peggy'" in page
-    client.post(f"/cluster/{cluster_a}", data={"voice": "Peggy"})
-    record = json.loads((labels_dir / "tags.jsonl").read_text().splitlines()[-1])
-    assert (record["name"], record["via"], record["offered"]["voice"]) == ("Peggy", "voice", ["Peggy"])
-
-
-def test_a_cluster_that_sounds_like_tagged_media_offers_media_for_one_tap(portal):
-    client, db_path, labels_dir = portal
-    log_in(client)
-    db = sqlite3.connect(db_path)
-    cluster_a = db.execute("SELECT cluster FROM turn_people WHERE turn_id = 'a0'").fetchone()[0]
-    db.executemany("INSERT INTO turn_media VALUES (?, ?)", [(f"a{i}", 0.93) for i in (0, 2, 4, 6)])
-    db.commit()
-    db.close()
-
-    assert "value='_media' formnovalidate class=hinted>Media" in client.get(f"/cluster/{cluster_a}").text
-    client.post(f"/cluster/{cluster_a}", data={"category": "_media"})
-    record = json.loads((labels_dir / "tags.jsonl").read_text().splitlines()[-1])
-    assert (record["name"], record["via"], len(record["at"])) == ("_media", "media", 4)  # a category takes the whole cluster
-
-    # A clip's category button wins over its empty name field.
-    client.post(f"/cluster/{cluster_a}/clip", data={"turn_id": "a2", "name": "", "category": "_music"})
-    record = json.loads((labels_dir / "tags.jsonl").read_text().splitlines()[-1])
-    assert (record["type"], record["name"]) == ("clip", "_music")
+    record_operator_input(db_path, labels_dir)
+    write_stream(db_path, labels_dir / "stream")
+    utterances = [json.loads(line) for line in (labels_dir / "stream/conversations/c1.jsonl").read_text().splitlines()]
+    kinds = {u["utterance_id"]: u["speaker"]["kind"] for u in utterances}
+    assert (kinds["c1:0000"], kinds["c1:0002"], kinds["c1:0004"], kinds["c1:0001"]) == ("owner", "stranger", "unknown", "anonymous")
 
 
 def test_a_spot_that_isnt_a_place_stops_being_offered(portal):
@@ -378,44 +211,6 @@ def test_a_spot_that_isnt_a_place_stops_being_offered(portal):
     assert "Nowhere new." in page and "Not places (1)" in page
     client.post("/places", data={"action": "unignore", "latitude": "-26.120000", "longitude": "80.140000"})
     assert "About 5 min" in client.get("/places").text
-
-
-def test_a_cluster_tagged_with_two_names_is_offered_to_check(portal):
-    client, db_path, labels_dir = portal
-    log_in(client)
-    db = sqlite3.connect(db_path)
-    cluster_a = db.execute("SELECT cluster FROM turn_people WHERE turn_id = 'a0'").fetchone()[0]
-    db.close()
-    client.post(f"/cluster/{cluster_a}", data={"action": "name", "name": "Alice"})  # a0, a2, a4
-    with open(labels_dir / "tags.jsonl", "a") as f:  # an older tag that heard someone else in a6
-        f.write(json.dumps({"type": "name", "at": [["2026-01-01T00:00:30+00:00", "2026-01-01T00:00:34+00:00"]],
-                            "name": "Bob", "tagged_at": "2026-01-01T00:00:00+00:00"}) + "\n")
-
-    index = client.get("/").text
-    assert "To check (1)" in index and "People (0)" in index
-    page = client.get(f"/cluster/{cluster_a}").text
-    assert "Tagged Alice and Bob" in page and "Tagged differently" in page and "/audio/a6" in page
-
-    client.post(f"/cluster/{cluster_a}", data={"action": "name", "name": "Alice"})  # settles it
-    index = client.get("/").text
-    assert "To check" not in index and "Alice" in index
-
-
-def test_a_person_s_least_like_turns_can_be_confirmed(portal):
-    client, db_path, labels_dir = portal
-    log_in(client)
-    db = sqlite3.connect(db_path)
-    cluster_a = db.execute("SELECT cluster FROM turn_people WHERE turn_id = 'a0'").fetchone()[0]
-    db.close()
-    client.post(f"/cluster/{cluster_a}", data={"action": "name", "name": "Alice"})  # the samples, a0, a2, a4
-    reprocess_people(db_path, labels_dir)
-
-    page = client.get("/person/Alice").text
-    assert "Least like Alice" in page and "/audio/a6" in page and "/audio/a0" not in page
-    confirmed = client.post(f"/cluster/{cluster_a}/clip", data={"turn_id": "a6", "confirm": "Alice", "back": "/person/Alice"},
-                            follow_redirects=False)
-    assert confirmed.headers["location"] == "/person/Alice"
-    assert "Least like" not in client.get("/person/Alice").text
 
 
 def test_words_wait_in_a_draft_and_update_commits_them_with_lattice_s_all_at_once(portal, tmp_path):

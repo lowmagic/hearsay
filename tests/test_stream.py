@@ -6,7 +6,6 @@ from hearsay.assemble import SCHEMA as ASSEMBLE_SCHEMA
 from hearsay.delivery import SCHEMA as DELIVERY_SCHEMA
 from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
 from hearsay.parse import SCHEMA as PARSE_SCHEMA
-from hearsay.people import SCHEMA as PEOPLE_SCHEMA
 from hearsay.places import SCHEMA as PLACES_SCHEMA
 from hearsay.speakers import SCHEMA as SPEAKERS_SCHEMA
 from hearsay.stream import write_stream
@@ -14,25 +13,25 @@ from hearsay.turns import SCHEMA as TURNS_SCHEMA
 
 T = 1_790_000_000.0  # unix seconds; conversation c1's WAV starts here
 
-# (text, diarized voice, owner/not_owner label, owner similarity, person, cluster);
-# a label is by voice unless the text says inherited.
+# (text, diarized voice, owner/not_owner label, owner similarity, the operator's
+# name tag); a label is by voice unless the text says inherited.
 TURNS = [
-    ("mine", "S0", "owner", 0.71, None, None),
-    ("walter's", "S1", "not_owner", 0.05, "Walter", "k1"),
-    ("first anon", "S2", "not_owner", 0.08, None, "k2"),
-    ("second anon", "S3", "not_owner", 0.02, None, "k3"),
-    ("first anon again", "S2", "not_owner", 0.09, None, "k2"),
-    ("a cashier", "S4", "not_owner", 0.11, "_stranger", "k4"),
-    ("a car alarm", None, "not_owner", 0.01, "_noise", "k5"),
-    ("too short to tell", "S0", None, 0.25, None, None),
-    ("yeah (inherited)", "S2", "not_owner", None, None, "k2"),
+    ("mine", "S0", "owner", 0.71, None),
+    ("walter's", "S1", "not_owner", 0.05, "Walter"),  # a name from before 2026-10-28: counts for nothing
+    ("first anon", "S2", "not_owner", 0.08, None),
+    ("second anon", "S3", "not_owner", 0.02, None),
+    ("first anon again", "S2", "not_owner", 0.09, None),
+    ("a cashier", "S4", "not_owner", 0.11, "_stranger"),
+    ("a car alarm", None, "not_owner", 0.01, "_noise"),
+    ("too short to tell", "S0", None, 0.25, None),
+    ("yeah (inherited)", "S2", "not_owner", None, None),
 ]
 
 
 def build(tmp_path):
     db_path = tmp_path / "h.sqlite"
     db = sqlite3.connect(db_path)
-    db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + CONVERSATIONS_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + PEOPLE_SCHEMA
+    db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + CONVERSATIONS_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA
                     + PLACES_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA)
     # The owner's tone of voice, scored on their turn only (hearsay/affect.py).
     db.execute("INSERT INTO turn_affect VALUES ('c1:0000', 0.42, 0.45, 0.6)")
@@ -41,13 +40,13 @@ def build(tmp_path):
     db.execute("INSERT INTO conversations VALUES ('c1', ?, ?, 60, 0)", (T, T + 100))
     db.execute("INSERT INTO conversations VALUES ('c2', ?, ?, 40, 1)", (T + 500, T + 560))  # not transcribed yet
     db.execute("INSERT INTO conversation_audio VALUES ('c1', '2026-09-21T14:13:20+00:00', 100, 1, 'c1.wav', 'sha')")
-    for idx, (text, voice, label, similarity, person, cluster) in enumerate(TURNS):
+    for idx, (text, voice, label, similarity, name) in enumerate(TURNS):
         turn_id = f"c1:{idx:04d}"
         db.execute("INSERT INTO turns VALUES (?, 'c1', ?, ?, ?, ?, ?, 0.8)", (turn_id, idx, 10.0 * idx, 10.0 * idx + 5, text, voice))
         basis = "diarization" if "inherited" in text else "voice" if label else None
         db.execute("INSERT INTO turn_speakers VALUES (?, 'c1', 1, NULL, ?, ?, ?)", (turn_id, similarity, label, basis))
-        if cluster:
-            db.execute("INSERT INTO turn_people VALUES (?, ?, ?, 0, 0, NULL)", (turn_id, cluster, person))
+        if name:
+            db.execute("INSERT INTO operator_input VALUES (?, 'name', ?)", (turn_id, name))
     db.commit()
     db.close()
     return db_path
@@ -66,13 +65,13 @@ def test_stream_attributes_speakers_and_leaves_out_non_speech(tmp_path):
 
     assert [(u["text"], u["speaker"]["kind"], u["speaker"]["name"], u["speaker"]["label"]) for u in utterances] == [
         ("mine", "owner", None, None),
-        ("walter's", "person", "Walter", None),
-        ("first anon", "anonymous", None, "anon A"),
-        ("second anon", "anonymous", None, "anon B"),
-        ("first anon again", "anonymous", None, "anon A"),
+        ("walter's", "anonymous", None, "anon A"),
+        ("first anon", "anonymous", None, "anon B"),
+        ("second anon", "anonymous", None, "anon C"),
+        ("first anon again", "anonymous", None, "anon B"),
         ("a cashier", "stranger", None, "stranger A"),
         ("too short to tell", "unknown", None, None),
-        ("yeah (inherited)", "anonymous", None, "anon A"),
+        ("yeah (inherited)", "anonymous", None, "anon B"),
     ]
     assert utterances[0]["start"] == "2026-09-21T14:13:20.000Z" and utterances[1]["end"] == "2026-09-21T14:13:35.000Z"
     assert utterances[0]["speaker_confidence"] == {"basis": "voice", "owner_similarity": 0.71}
@@ -89,7 +88,7 @@ def test_stream_attributes_speakers_and_leaves_out_non_speech(tmp_path):
 def test_turns_the_operator_says_are_theirs_are_the_owners(tmp_path):
     db_path, stream_dir = build(tmp_path), tmp_path / "stream"
     db = sqlite3.connect(db_path)
-    db.execute("UPDATE turn_people SET person = '_me' WHERE cluster = 'k2'")
+    db.executemany("INSERT INTO operator_input VALUES (?, 'name', '_me')", [("c1:0002",), ("c1:0004",), ("c1:0008",)])
     # Loud on the call: the channel said someone else, so it isn't the basis.
     db.execute("UPDATE turn_speakers SET basis = 'channel' WHERE turn_id IN ('c1:0001', 'c1:0004')")
     db.commit()
@@ -101,8 +100,25 @@ def test_turns_the_operator_says_are_theirs_are_the_owners(tmp_path):
     assert found["first anon"] == ("owner", None, "named")
     assert found["first anon again"] == ("owner", None, "named")
     assert found["yeah (inherited)"] == ("owner", None, "diarization")
-    assert found["walter's"] == ("person", None, "channel")
-    assert found["second anon"] == ("anonymous", "anon A", "cluster")
+    assert found["walter's"] == ("anonymous", "anon A", "channel")
+    assert found["second anon"] == ("anonymous", "anon B", "cluster")
+
+
+def test_a_clip_s_tag_corrects_the_owner_but_a_speaker_s_tag_does_not(tmp_path):
+    db_path, stream_dir = build(tmp_path), tmp_path / "stream"
+    db = sqlite3.connect(db_path)
+    # A speaker's tag put on a whole anonymous speaker never held the owner's turns.
+    db.execute("INSERT INTO operator_input VALUES ('c1:0000', 'name', '_noise')")
+    db.execute("INSERT INTO operator_input VALUES ('c1:0007', 'clip', '_me')")
+    db.execute("INSERT INTO operator_input VALUES ('c1:0002', 'clip', '_stranger')")
+    db.commit()
+    db.close()
+    write_stream(db_path, stream_dir)
+    _, utterances = read(stream_dir)
+    found = {u["text"]: (u["speaker"]["kind"], u["speaker_confidence"]["basis"]) for u in utterances}
+    assert found["mine"] == ("owner", "voice")
+    assert found["too short to tell"] == ("owner", "named")
+    assert found["first anon"] == ("stranger", "named")
 
 
 def test_revisions_change_only_when_a_conversation_does(tmp_path):
@@ -115,17 +131,17 @@ def test_revisions_change_only_when_a_conversation_does(tmp_path):
     write_stream(db_path, stream_dir)
     assert read(stream_dir)[0][0]["revision"] == first
 
-    # Naming someone applies to past turns, so the conversation's revision
-    # changes, but the transcript and so the utterance ids don't.
+    # The operator's correction applies to past turns, so the conversation's
+    # revision changes, but the transcript and so the utterance ids don't.
     db = sqlite3.connect(db_path)
-    db.execute("UPDATE turn_people SET person = 'Olivia' WHERE cluster = 'k2'")
+    db.execute("INSERT INTO operator_input VALUES ('c1:0002', 'clip', '_me')")
     db.commit()
     write_stream(db_path, stream_dir)
     index, utterances = read(stream_dir)
     assert index[0]["revision"] != first
     assert index[0]["transcript_revision"] == transcript
     assert [u["utterance_id"] for u in utterances] == ids
-    assert utterances[2]["speaker"] == {"kind": "person", "name": "Olivia", "label": None}
+    assert utterances[2]["speaker"] == {"kind": "owner", "name": None, "label": None}
 
     # Re-transcription: the same ids now name different speech.
     db.execute("UPDATE turns SET end = end + 2, text = 'mine, longer' WHERE idx = 0")

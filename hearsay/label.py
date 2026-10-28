@@ -1,6 +1,6 @@
 """Label turns by ear, and report how well the thresholds match the labels.
 
-Naming other speakers happens in the web portal (hearsay/portal.py).
+Correcting single turns happens in the web portal (hearsay/portal.py).
 
 Runs on the operator's own machine, not in the container: it plays audio
 locally and reaches the NAS over `ssh nas`. Standard library only, so any
@@ -15,7 +15,7 @@ rewritten only to add a window.
     python -m hearsay.label                    # label turns me / not me, blind
     python -m hearsay.label review             # re-hear labels the model disagrees with
     python -m hearsay.label check              # label turns labeled by diarization, blind
-    python -m hearsay.label report             # precision/recall, cluster health
+    python -m hearsay.label report             # precision/recall
 
 START and END are ISO-8601 times, e.g. 2026-09-27T10:05 or "2026-09-27 10:05";
 without a UTC offset they are this machine's local time. For an import, START
@@ -32,7 +32,6 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from hearsay.people import CLUSTER_THRESHOLD
 from hearsay.speakers import DIARIZATION_AGREEMENT, NOT_OWNER_THRESHOLD, OWNER_THRESHOLD
 from hearsay.turns import wall
 
@@ -67,14 +66,8 @@ SELECT coalesce(ts.basis, 'unlabeled') AS basis, sum(t.end - t.start) AS seconds
 FROM turn_speakers ts JOIN turns t ON t.turn_id = ts.turn_id GROUP BY 1
 """
 
-# The operator's labels and tags as reprocess matched them to turns.
+# The operator's labels as reprocess matched them to turns.
 LABELS_SQL = "SELECT turn_id, value FROM operator_input WHERE kind = 'label'"
-REVIEWED_SQL = "SELECT turn_id, kind FROM operator_input WHERE kind IN ('name', 'mixed')"
-
-CLUSTERS_SQL = """
-SELECT turn_id, cluster, person, name_conflict
-FROM turn_people
-"""
 
 # Runs on the NAS: writes one turn of a conversation WAV to stdout as WAV.
 SLICE_SCRIPT = """
@@ -101,14 +94,6 @@ def query(sql: str) -> list[dict]:
 
 def candidates() -> list[dict]:
     return query(CANDIDATES_SQL)
-
-
-def clusters() -> dict[str, list[dict]]:
-    """cluster -> its turns, largest cluster first."""
-    grouped = {}
-    for row in query(CLUSTERS_SQL):
-        grouped.setdefault(row["cluster"], []).append(row)
-    return dict(sorted(grouped.items(), key=lambda item: (-len(item[1]), item[0])))
 
 
 def existing_labels() -> dict[str, str]:
@@ -297,7 +282,6 @@ def report() -> None:
         print(f"{line(rows, 'owner', lambda sim: sim >= t_owner, t_owner)}   "
               f"{line(rows, 'not_owner', lambda sim: sim <= t_not, t_not)}")
     inheritance_report(labeled)
-    cluster_report()
 
 
 def inheritance_report(labeled: dict[str, str]) -> None:
@@ -319,29 +303,6 @@ def inheritance_report(labeled: dict[str, str]) -> None:
         mine = [heard for got, heard, _ in checked if got == label]
         if mine:
             print(f"  {label}: {sum(1 for h in mine if h == label)}/{len(mine)} right")
-
-
-def cluster_report() -> None:
-    grouped = clusters()
-    reviewed_rows = query(REVIEWED_SQL)
-    named = {r["turn_id"] for r in reviewed_rows if r["kind"] == "name"}
-    marked_mixed = {r["turn_id"] for r in reviewed_rows if r["kind"] == "mixed"}
-    people = {}
-    for c, segs in grouped.items():
-        if segs[0]["person"]:
-            people.setdefault(segs[0]["person"], []).append(c)
-    reviewed = [segs for segs in grouped.values()
-                if any(s["turn_id"] in named or s["turn_id"] in marked_mixed for s in segs)]
-    mixed_now = [segs for segs in reviewed if marked_mixed & {s["turn_id"] for s in segs}]
-    sizes = sorted((len(s) for s in grouped.values()), reverse=True)
-    print(f"\nanonymous speakers (cluster threshold in this checkout: {CLUSTER_THRESHOLD})")
-    print(f"  {len(grouped)} clusters, sizes {sizes[:12]}{' ...' if len(sizes) > 12 else ''}")
-    print(f"  {len(people)} named people over {sum(len(c) for c in people.values())} clusters")
-    print(f"  reviewed clusters marked mixed: {len(mixed_now)}/{len(reviewed)}  (many: raise the threshold)")
-    spread = {p: len(c) for p, c in people.items() if len(c) > 1}
-    print(f"  people spread over several clusters: {spread or 'none'}  (many: lower the threshold)")
-    conflicts = sum(1 for segs in grouped.values() if segs[0]["name_conflict"])
-    print(f"  clusters with conflicting names: {conflicts}")
 
 
 def line(rows, label, predicate, threshold) -> str:

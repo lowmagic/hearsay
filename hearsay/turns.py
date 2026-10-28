@@ -231,6 +231,28 @@ def resolve(db: sqlite3.Connection, labels_text: str, tags_text: str) -> Operato
     return result
 
 
+def categories(db: sqlite3.Connection) -> dict[str, str]:
+    """turn_id -> the operator's category for it (_me, _stranger, _media, ...).
+
+    Names that don't start with "_" are people, and Hearsay no longer names
+    anyone other than the owner (2026-10-28), so they count for nothing. A
+    category tagged on one clip applies whatever the turn's voice said, so
+    the operator can correct the owner's label either way. One tagged on a
+    whole speaker applies to turns labeled not_owner only: it was put on an
+    anonymous speaker, which held no owner turns.
+    """
+    found = {}
+    for turn_id, kind, value, label in db.execute(
+        "SELECT oi.turn_id, oi.kind, oi.value, ts.label FROM operator_input oi"
+        " JOIN turn_speakers ts ON ts.turn_id = oi.turn_id"
+        " WHERE oi.kind IN ('name', 'clip') AND oi.value LIKE '\\_%' ESCAPE '\\'"
+        " ORDER BY oi.kind DESC"  # name first, so a clip's tag wins
+    ):
+        if kind == "clip" or label == "not_owner":
+            found[turn_id] = value
+    return found
+
+
 def read_operator_files(labels_dir: Path) -> tuple[str, str]:
     def text(name: str) -> str:
         path = labels_dir / name

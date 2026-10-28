@@ -12,7 +12,6 @@ from hearsay.assemble import assemble
 from hearsay.conversations import find_conversations
 from hearsay.imports import load_imports
 from hearsay.parse import ParseFailed, rebuild
-from hearsay.people import group_people
 from hearsay.speakers import label_speakers
 from hearsay.turns import build_turns, record_operator_input
 
@@ -141,4 +140,3 @@ def test_every_real_captured_payload_reprocesses(tmp_path):
     build_turns(db_path, transcripts)
     record_operator_input(db_path, tmp_path / "labels")
     label_speakers(raw, db_path, tmp_path / "labels", Path(os.environ["HEARSAY_MODEL_DIR"]))
-    group_people(db_path)
