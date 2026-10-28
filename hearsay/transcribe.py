@@ -20,6 +20,15 @@ A transcript records the sha256 of the WAV it was made from and the settings
 used, including the words Parakeet was nudged toward (hearsay/words.py).
 Reprocess only uses it for that exact WAV. When either changes, the
 conversation is transcribed again on the next run.
+
+A conversation that fails gets a marker in failed/ instead, for the same WAV
+and settings, and is skipped until either changes. One bad WAV failing every
+run would stop corral's chain, so no transcript reached the stream.
+
+Under corral the job takes conversations until their audio adds up to the
+hint corral gives (CORRAL_SUGGESTED_ITEMS, in seconds of audio), reports the
+seconds it took, and asks for another run while any are left, so the GPU
+host frees up between chunks. Run by hand, it does everything.
 """
 
 import hashlib
@@ -37,6 +46,7 @@ NAS = "nas"
 DB = "/mnt/fast/hearsay/db/hearsay.sqlite"
 AUDIO_DIR = "/mnt/fast/hearsay/audio"
 TRANSCRIPTS_DIR = "/mnt/fast/hearsay/transcripts"
+FAILED_DIR = f"{TRANSCRIPTS_DIR}/failed"
 WORDS = "/mnt/fast/hearsay/labels/words.json"
 DEVICE = "cuda"
 SETTINGS = {
@@ -64,14 +74,18 @@ PIECE_SECONDS = 300
 # since boosting too hard hears the words where they weren't said.
 BOOST_ALPHA = 0.5
 
-# Runs on the NAS: prints {conversation_id: [wav_sha256, settings]} for the transcripts there.
+# Runs on the NAS: prints {conversation_id: [wav_sha256, settings]} for each
+# directory given, the transcripts and the failure markers.
 EXISTING_SCRIPT = """
 import glob, json, os, sys
-out = {}
-for path in glob.glob(os.path.join(sys.argv[1], "*.json")):
-    with open(path) as f:
-        t = json.load(f)
-    out[t["conversation_id"]] = [t["wav_sha256"], t["settings"]]
+out = []
+for directory in sys.argv[1:]:
+    found = {}
+    for path in glob.glob(os.path.join(directory, "*.json")):
+        with open(path) as f:
+            t = json.load(f)
+        found[t["conversation_id"]] = [t["wav_sha256"], t["settings"]]
+    out.append(found)
 print(json.dumps(out))
 """
 
@@ -92,11 +106,32 @@ def current_settings() -> dict:
 
 
 def pending(settings: dict) -> list[dict]:
-    sql = ("SELECT conversation_id, wav_file, wav_sha256 FROM conversation_audio"
+    """Conversations without a transcript or failure marker for their current WAV and settings, oldest first."""
+    sql = ("SELECT conversation_id, wav_file, wav_sha256, duration FROM conversation_audio"
            " WHERE wav_file IS NOT NULL AND wav_sha256 IS NOT NULL ORDER BY conversation_id")
     rows = json.loads(ssh(["sqlite3", "-json", DB, f'"{sql}"']) or b"[]")
-    existing = json.loads(ssh(["python3", "-", TRANSCRIPTS_DIR], EXISTING_SCRIPT.encode()))
-    return [r for r in rows if existing.get(r["conversation_id"]) != [r["wav_sha256"], settings]]
+    done, failed = json.loads(ssh(["python3", "-", TRANSCRIPTS_DIR, FAILED_DIR], EXISTING_SCRIPT.encode()))
+    return [r for r in rows
+            if [r["wav_sha256"], settings] not in (done.get(r["conversation_id"]), failed.get(r["conversation_id"]))]
+
+
+def chunk(todo: list[dict], seconds: float | None) -> list[dict]:
+    """The first conversations whose audio fits in seconds, at least one; all of them without a hint."""
+    if seconds is None:
+        return todo
+    taken, total = [], 0.0
+    for row in todo:
+        if taken and total + row["duration"] > seconds:
+            break
+        taken.append(row)
+        total += row["duration"]
+    return taken
+
+
+def write_nas(target: str, data: dict) -> None:
+    """Writes JSON to the NAS atomically: temp file, then rename."""
+    ssh(["sh", "-c", f"'mkdir -p {os.path.dirname(target)} && cat > {target}.tmp && mv {target}.tmp {target}'"],
+        json.dumps(data).encode())
 
 
 def load_models(hf_token: str, settings: dict):
@@ -214,15 +249,15 @@ def main() -> None:
     hf_token = os.environ.get("HF_TOKEN")
     if not hf_token:
         sys.exit("HF_TOKEN is not set (it lives in ~/.config/hearsay/dev.env)")
+    hint = os.environ.get("CORRAL_SUGGESTED_ITEMS")
     settings = current_settings()
     todo = pending(settings)
-    print(f"{len(todo)} conversation(s) to transcribe.")
-    if not todo:
-        return
-
-    models = load_models(hf_token, settings)
-    failed = 0
-    for row in todo:
+    batch = chunk(todo, float(hint) if hint else None)
+    print(f"{len(todo)} conversation(s) to transcribe, {len(batch)} in this run.")
+    seconds, failed = 0.0, 0
+    if batch:
+        models = load_models(hf_token, settings)
+    for row in batch:
         conversation_id = row["conversation_id"]
         with tempfile.TemporaryDirectory() as tmp:
             wav_path = Path(tmp) / "audio.wav"
@@ -231,19 +266,27 @@ def main() -> None:
                 # Reprocess rewrote the WAV since we listed it; the next run picks it up.
                 print(f"  {conversation_id}: WAV changed underneath us, skipped")
                 continue
+            seconds += row["duration"]
             try:
                 segments = transcribe(models, wav_path)
-            except Exception as e:  # one bad conversation shouldn't stop the rest
+            except Exception as e:  # one bad conversation shouldn't stop the rest, or later runs
                 print(f"  {conversation_id}: failed: {e!r}")
+                write_nas(f"{FAILED_DIR}/{conversation_id}.json",
+                          {"conversation_id": conversation_id, "wav_sha256": row["wav_sha256"],
+                           "settings": settings, "error": repr(e)})
                 failed += 1
                 continue
-        transcript = {"conversation_id": conversation_id, "wav_sha256": row["wav_sha256"],
-                      "settings": settings, "segments": segments}
-        target = f"{TRANSCRIPTS_DIR}/{conversation_id}.json"
-        ssh(["sh", "-c", f"'cat > {target}.tmp && mv {target}.tmp {target}'"], json.dumps(transcript).encode())
+        write_nas(f"{TRANSCRIPTS_DIR}/{conversation_id}.json",
+                  {"conversation_id": conversation_id, "wav_sha256": row["wav_sha256"],
+                   "settings": settings, "segments": segments})
         print(f"  {conversation_id}: {len(segments)} segments")
     if failed:
-        sys.exit(f"{failed} conversation(s) failed")
+        print(f"{failed} conversation(s) failed; each is retried once its WAV or the settings change "
+              f"(markers in {FAILED_DIR})")
+    if "CORRAL_RESULT" in os.environ:
+        # Counts only: corral posts results to webhooks, which may be outside the tailnet.
+        Path(os.environ["CORRAL_RESULT"]).write_text(json.dumps(
+            {"items": round(seconds), "more": len(batch) < len(todo), "failed": failed}))
 
 
 if __name__ == "__main__":
