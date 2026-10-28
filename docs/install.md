@@ -55,9 +55,9 @@ kinds to those workers and check they're running.
 To update, run `git pull` on every host, then re-run `install/nas.sh` on the
 NAS, `install/gpu.sh` on the dev box, and `install/ios.sh` and
 `install/mac.sh` on the Mac, in that order: the NAS must read a new kind of
-upload record before the phone or Mac sends it. The dev box runs
-`hearsay/transcribe.py` from its checkout, so its `git pull` takes effect at
-the next transcription. With a
+upload record before the phone or Mac sends it. The dev box runs its own
+copy of hearsay, so a `git pull` there takes effect when `install/gpu.sh`
+re-runs. With a
 free Apple ID the phone's install expires after 7 days; re-running
 `install/ios.sh` renews it.
 
@@ -125,7 +125,11 @@ Conversations are found in the audio stream itself (voice detection; a
 conversation ends after 3 minutes of silence), not taken from Omi. New audio
 flows WAV, then transcript, then turns as soon as each machine is free, with
 nothing to run by hand; `corral pause` on the dev box's worker holds
-transcription while you use its GPU. Each run builds
+transcription while you use its GPU. Transcription takes a backlog in chunks
+of about corral's window for `hearsay.transcribe`, so a pause takes effect
+between chunks. A conversation that fails to transcribe is left a marker in
+`transcripts/failed/` and skipped until its WAV or the settings change; delete
+the marker to retry it sooner. Each run builds
 a complete new database from raw in memory, then updates the real one in a
 single transaction that writes only the rows that changed, so readers never
 see a half-built database and a run with nothing new writes almost nothing
