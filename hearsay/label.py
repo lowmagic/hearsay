@@ -44,7 +44,7 @@ IMPORTS = "/mnt/fast/hearsay/imports"
 ANSWERS = {"m": "owner", "n": "not_owner", "u": "unsure"}
 
 CANDIDATES_SQL = """
-SELECT t.turn_id, t.conversation_id, t.start, t.end, ts.owner_similarity, ca.wav_file, ca.zero_at
+SELECT t.turn_id, t.conversation_id, t.start, t.end, t.text, ts.owner_similarity, ca.wav_file, ca.zero_at
 FROM turn_speakers ts
 JOIN turns t ON t.turn_id = ts.turn_id
 JOIN conversation_audio ca ON ca.conversation_id = t.conversation_id
