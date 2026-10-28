@@ -259,7 +259,8 @@ the stream picks the tag up on the next reprocess. To measure how well your
 voice is recognized, label turns blind with `hearsay-label` and read
 `hearsay-label report`.
 
-To re-run the test suite against the real captures (also run by `nas.sh`):
+To run the test suite against the real captures (slow: it repeats a whole
+reprocess without the cache):
 
 ```sh
 sudo docker compose -f /mnt/fast/repos/hearsay/install/compose.yaml run --rm check

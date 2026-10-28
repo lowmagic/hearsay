@@ -149,11 +149,11 @@ if curl -s -o /dev/null --max-time 3 "http://$HEARSAY_LAN_IP:$NAS_CAPTURE_PORT/c
     die "the capture receiver answers on the LAN address; it must be tailnet only"
 fi
 
-say "Checking that every captured payload parses"
-# -T and /dev/null: never read the terminal, so typing ahead isn't swallowed.
-"${COMPOSE[@]}" run --rm -T check </dev/null
-
 say "Reprocessing now"
+# Also the check that every captured payload parses: reprocess replaces the
+# database only if all of them do. (The real-capture test in `check` repeats
+# the same work uncached, so it's run by hand, not here.)
+# -T and /dev/null: never read the terminal, so typing ahead isn't swallowed.
 # Waits for a run in progress. Its output is in the journal too:
 # journalctl -t hearsay-reprocess
 flock /run/hearsay-reprocess.lock "${COMPOSE[@]}" run --rm -T reprocess </dev/null
