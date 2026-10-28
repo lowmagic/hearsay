@@ -3,7 +3,7 @@
 The operator's guide. Install says which script runs on which host, in what
 order, and what to do between them; the sections after it cover running
 Hearsay: recording, reprocessing, your voice, reading the stream, importing
-missed audio and naming speakers. For what Hearsay is, see the
+missed audio and correcting who spoke. For what Hearsay is, see the
 [README](../README.md).
 
 ## Install
@@ -26,7 +26,7 @@ kinds to those workers and check they're running.
    sudo /mnt/fast/repos/hearsay/install/nas.sh
    ```
    This creates the datasets under `fast/hearsay` (the NVMe pool) and the
-   secrets, builds the images, starts the speaker-naming portal on the LAN
+   secrets, builds the images, starts the portal on the LAN
    and tailnet and the capture receiver on the tailnet, checks that every
    captured payload reprocesses, reprocesses once, and waits for a real
    upload from the phone or Mac (on a new install it stops there; re-run it
@@ -207,7 +207,7 @@ output, rewritten after every reprocess:
   forget.
 
 Treat each conversation as a unit: when its `revision` changes, re-read its
-file and replace everything you had for it. Names apply retroactively and
+file and replace everything you had for it. Corrections apply retroactively and
 conversations get re-transcribed as they grow, so individual utterances can
 change or disappear; utterance ids keep their meaning only while
 `transcript_revision` does. The guarantees are under Output contract in
@@ -227,33 +227,21 @@ It is copied unchanged to `/mnt/fast/hearsay/imports/` over `ssh nas` and
 placed on the timeline at that time on the next reprocess; where it overlaps
 live audio, the live audio wins. Importing the same file twice does nothing.
 
-## Naming other speakers (phone or any browser)
+## Correcting who spoke (phone or any browser)
 
-Reprocessing groups not-owner segments into anonymous speaker clusters. Name
-them in the web portal that `nas.sh` starts, at the addresses it prints. It
-listens on the LAN and tailnet only, so from your phone use the tailnet
-address, or the Hearsay app's Voices tab, which shows the same portal and
-logs in with the app's capture token. Each cluster plays a few samples. Type a name (reusing a name merges
-into that person), mark it as more than one person, or skip it for now: skipped
-clusters move to their own list and come round again after the rest. If you
-can't tell who it is (noise, several voices), skip rather than guess. A
-single clip that isn't the speaker (a cough, a video, someone else) can be
-tagged on its own, under its player: only that turn takes the tag. A named
-cluster can be renamed, or its name forgotten, from its page; a person can be
-renamed everywhere at once from theirs (renaming onto an existing name merges
-the two). Names starting with `_` are
-categories, not people: Me, Media, Music, Noise and Stranger each have a button,
-on the cluster and under each clip (`_me` is you, where your voice wasn't
-recognized, and reaches the stream as yours; `_media` is TV or video talk,
-`_music` is songs, so the media hint learns from talk alone).
+Hearsay says only whether you spoke: it names nobody else (since 2026-10-28;
+names given before then are kept in the labels but count for nothing). The
+web portal that `nas.sh` starts, at the addresses it prints, plays the turns
+it couldn't decide, latest first. It listens on the LAN and tailnet only, so
+from your phone use the tailnet address, or the Hearsay app's Voices tab,
+which shows the same portal and logs in with the app's capture token. Tag
+each turn Me, Someone else, Media, Music or Noise: Me reaches the stream as
+yours, Someone else as a stranger, and the rest (TV or video talk, songs,
+noise) is left out. A tag applies to that turn whatever its voice said.
 
 The portal's Places page lists spots where the phone recorded and no named
-place is near (how long, which days, who was heard there, a map link); name
-them there. Only these names reach the stream, never coordinates.
-A cluster heard at a named place offers the people heard most at that place
-as one-tap names above its name box; a place never names anyone on its own.
-A cluster that sounds like the TV or video you've tagged `_media` before
-has its Media button picked out.
+place is near (how long, which days, a map link); name them there. Only these
+names reach the stream, never coordinates.
 
 The portal's Words page lists words transcription leans toward (names,
 jargon). Type them one per line and save a draft; it shows what would change
@@ -264,11 +252,12 @@ never creates that folder, since Idea Machine's dataset mounts there: if
 it's missing, the portal starts without it and `nas.sh` says so. Each Update re-transcribes
 every conversation on the dev box's next run, so batch your edits.
 
-Names are stored on the segments you heard, in `/mnt/fast/hearsay/labels/`,
-so they survive reclustering and apply to every past conversation. The portal
-shows them immediately; the database picks them up on the next reprocess.
-`.venv/bin/python -m hearsay.label report` shows cluster health, for tuning
-`CLUSTER_THRESHOLD` in [`hearsay/people.py`](../hearsay/people.py).
+Tags are stored by the time of the turn you heard, in
+`/mnt/fast/hearsay/labels/`, so they survive re-transcription and apply to
+every past conversation. The portal takes a tagged turn off its list at once;
+the stream picks the tag up on the next reprocess. To measure how well your
+voice is recognized, label turns blind with `hearsay-label` and read
+`hearsay-label report`.
 
 To re-run the test suite against the real captures (also run by `nas.sh`):
 

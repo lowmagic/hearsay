@@ -3,7 +3,7 @@
 Hearsay turns captured audio into attributed utterances: who said what, when.
 It ingests audio from the pendant (through the iPhone app) and the Mac,
 assembles it, transcribes, diarizes, and
-identifies speakers (me / anonymous cluster / tagged person).
+identifies speakers: the owner or not. It names nobody else (2026-10-28).
 
 Hearsay does NOT categorize, summarize, extract ideas, or interpret content.
 That belongs to downstream consumers (Idea Machine). If a change requires
@@ -20,11 +20,13 @@ likely token) and speaker_confidence {basis,
 owner_similarity}; basis is voice, named, cluster, channel (in a Mac
 recording, the turn was loud on the mic, so the owner's, or on the call, so
 someone else's), diarization (the turn took its label from its diarized
-speaker in the conversation, not its own voice) or none. Speaker kinds: owner, person (named), anonymous (labeled
-per conversation, e.g. "anon A"), stranger, unknown. `_noise`, `_media` and `_music`
-turns are left out (every category but `_stranger` and `_me`); `_` names are categories, not people.
-`_me` turns are the owner's, basis named (or diarization), where the operator
-heard the owner in turns their voice or channel gave to someone else. Owner
+speaker in the conversation, not its own voice) or none. Speaker kinds: owner, anonymous (labeled
+per conversation by diarized speaker, e.g. "anon A"), stranger, unknown; `person` is
+still a valid kind but never written, and `name` is always null. The operator's
+categories (`hearsay/turns.py`): `_me` turns are the owner's, basis named (or
+diarization), where the operator heard the owner in turns their voice or
+channel gave to someone else; `_stranger` turns are someone else present;
+`_noise`, `_media` and `_music` turns are left out. Owner
 utterances may also carry `affect` {arousal}: how calm or animated the owner
 sounded, about 0-1, from the audio alone (`hearsay/affect.py`); absent where
 the turn wasn't scored. Other people's tone is never inferred. They may also
@@ -97,14 +99,16 @@ Guarantees consumers rely on (Idea Machine, `docs/ROADMAP.md` §3 there):
 
 ## Current slice
 
-Slice 18: review that shows what was said, and gates new matches (see the
-roadmap). Every clip in the portal shows its words, time and place. Next,
-voiceprints built only from the operator's input, and new matches to a
-named person gated in batches, where rejecting one keeps that speaker apart
-from them. Then slice 20 (throw out what was said, and hold the stream a
-week), then slice 19 (turns kept without their audio) and slice 12
-(retention), which change the invariants on raw payloads and re-running
-from raw.
+Me / not me (2026-10-28): Hearsay names nobody but the owner. Naming people,
+place hints for names (slice 14), the media hint (slice 15) and gating new
+matches (slice 18) are shelved; their code is gone, and names already given
+stay in labels/tags.jsonl, unread. The portal plays the turns Hearsay
+couldn't decide and the operator tags each Me, Someone else or not speech.
+Next, re-measure owner / not-owner by ear on Hearsay's own turns: Idea
+Machine's M2 validates me / not me with it, and slice 12 waits for M2. Then
+slice 20 (throw out what was said, and hold the stream a week), then slice
+19 (turns kept without their audio) and slice 12 (retention), which change
+the invariants on raw payloads and re-running from raw.
 
 Slice 17: how the owner holds a turn (see the roadmap). Owner utterances
 carry `delivery`, from Parakeet's word timings (`hearsay/delivery.py`):
@@ -120,15 +124,6 @@ stream, the one dimension checked by ear. Valence waits for its own check
 (tone without words, and a blind rating); dominance follows arousal for every
 voice measured and stays out. Other people's tone is never inferred.
 
-Slice 14: place as a hint for who is speaking (see the roadmap). When the
-operator names a cluster in the portal, offer the people heard at the
-conversation's places first. Voice stays the judge: a place never names
-anyone on its own, and never overrides a voice label or the operator's names.
-
-Slice 15 (media hint) is built and being measured alongside 14: a cluster
-that sounds like the media the operator tagged offers `_media` for one tap
-(`hearsay/media.py`), never tagged on its own.
-
 Slice 13 (where a conversation happened) is done: the iPhone app samples the
 owner's location while recording (precise fixes while moving, an anchor
 while staying put, `ios/Hearsay/Movement.swift`; records in the capture
@@ -136,7 +131,7 @@ upload, `hearsay/capture.py`), and each conversation in the stream lists the
 places the operator named that it happened at (`hearsay/places.py`,
 labels/places.jsonl), never coordinates.
 
-Slice 12 (retention) follows slices 18, 20 and 19: then all audio past a
+Slice 12 (retention) follows slices 20 and 19, and Idea Machine's M2: then all audio past a
 rolling window (90 days to start) is deleted, the owner's too except the
 enrollment windows', and so is the audio of every stretch the operator
 threw out.
@@ -147,11 +142,6 @@ the operator says yes to a Zoom call's prompt (`mac/`, `install/mac.sh`).
 Each turn is attributed by the channel it's loud on (`with_channel` in
 `hearsay/speakers.py`), unless the voice clearly says otherwise; a work
 machine is never used for capture or holds audio.
-
-Slice 18 is done when the operator gates new matches in batches, rejected
-speakers stay apart from the person, and voiceprints come only from the
-operator's input. Slice 14 is done when naming a cluster offers the people
-heard at that place first, and that measurably saves the operator time.
 
 ## Coding standards
 
