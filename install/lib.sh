@@ -20,9 +20,9 @@ IDEAMACHINE_VOCAB_DIR="/mnt/fast/ideamachine/vocab"
 NAS_PORTAL_ENV="$NAS_CONFIG/portal.env"
 NAS_CAPTURE_ENV="$NAS_CONFIG/capture.env"
 NAS_CORRAL_ENV="$NAS_CONFIG/corral.env"
-# Corral's NAS worker (github.com/junglestyle/corral, examples/system-worker.sh
-# there) runs from here, and its server listens on this port.
-NAS_CORRAL_DIR="/mnt/fast/corral"
+# Corral's NAS worker (github.com/junglestyle/corral, deployed from the infra repo)
+# runs from here, and its server listens on this port.
+NAS_CORRAL_DIR="/mnt/fast/corral-worker"
 NAS_CORRAL_PORT=8700
 NAS_PORTAL_PORT=8788
 NAS_CAPTURE_PORT=8789

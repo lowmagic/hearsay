@@ -12,9 +12,9 @@ Each script is idempotent and walks you through any step that needs you.
 Secrets are kept in env files outside the repo.
 
 The pipeline runs on [corral](https://github.com/junglestyle/corral), set up
-from its own repo first: its server on the NAS, a NAS worker offering `nas`
-from `/mnt/fast/corral` (corral's `examples/system-worker.sh`), and a user
-worker offering `gpu` on the dev box. `nas.sh` and `gpu.sh` add Hearsay's
+first from the infra repo: its server on the NAS, a NAS worker offering `nas`
+from `/mnt/fast/corral-worker`, and a user worker offering `gpu` on the dev
+box. `nas.sh` and `gpu.sh` add Hearsay's
 kinds to those workers and check they're running.
 
 1. **Dev box (optional):** [`install/dev.sh`](../install/dev.sh) sets up a venv, a dev secret in
