@@ -33,7 +33,12 @@ say "Python 3.12 environment in $GPU_VENV"
 command -v uv >/dev/null || die "install uv first: https://docs.astral.sh/uv/getting-started/installation/"
 uv python install 3.12
 [ -x "$GPU_VENV/bin/python" ] || uv venv --python 3.12 "$GPU_VENV"
-VIRTUAL_ENV="$GPU_VENV" uv pip install --quiet -e "$REPO_DIR[transcribe]"
+# A copy, not editable: an editable install points at this clone, and broke
+# every transcription for a day when the clone moved. Reinstalled every run,
+# since the version doesn't change with the code.
+VIRTUAL_ENV="$GPU_VENV" uv pip install --quiet --reinstall-package hearsay "$REPO_DIR[transcribe]"
+# From /, so the clone in the working directory can't stand in for the install.
+(cd / && "$GPU_VENV/bin/python" -c "import hearsay.transcribe") || die "the GPU environment can't import hearsay.transcribe"
 "$GPU_VENV/bin/python" -c "import torch; assert torch.cuda.is_available(), 'CUDA not available to torch'"
 
 say "Hugging Face token in $DEV_ENV"
