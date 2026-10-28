@@ -106,10 +106,10 @@ export HEARSAY_COMMIT
 
 say "Corral (github.com/junglestyle/corral)"
 # Reprocess runs as a kind on corral's NAS worker, and the capture receiver
-# enqueues the pipeline after each upload. Corral is set up from its own repo.
+# enqueues the pipeline after each upload. Corral is set up from the infra repo.
 systemctl is-active -q corral-worker && [ -f "$NAS_CORRAL_DIR/worker.toml" ] \
-    || die "no corral worker running from $NAS_CORRAL_DIR. Set up corral's server and NAS worker (docs/running.md
-in junglestyle/corral, examples/system-worker.sh there), then re-run."
+    || die "no corral worker running from $NAS_CORRAL_DIR. Set up corral's server and NAS worker from the infra repo,
+then re-run."
 grep -q '"nas"' "$NAS_CORRAL_DIR/worker.toml" \
     || die "the corral worker in $NAS_CORRAL_DIR/worker.toml doesn't offer \"nas\"; add it to offers, then re-run"
 corral_token="$(env_get "$NAS_CORRAL_DIR/env" CORRAL_TOKEN)"
