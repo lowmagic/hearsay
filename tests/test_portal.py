@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 pytest.importorskip("numpy")
 
 from hearsay.assemble import SCHEMA as ASSEMBLE_SCHEMA  # noqa: E402
+from hearsay.media import SCHEMA as MEDIA_SCHEMA  # noqa: E402
 from hearsay.parse import SCHEMA as PARSE_SCHEMA  # noqa: E402
 from hearsay.places import SCHEMA as PLACES_SCHEMA, read_places  # noqa: E402
 from hearsay.portal import create_app  # noqa: E402
@@ -30,7 +31,7 @@ def portal(tmp_path):
         w.writeframes(b"".join(sec.to_bytes(2, "little") * 16000 for sec in range(40)))
 
     db = sqlite3.connect(db_path)
-    db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + PLACES_SCHEMA)
+    db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + PLACES_SCHEMA + MEDIA_SCHEMA)
     db.execute("INSERT INTO conversation_audio VALUES ('c1', '2026-01-01T00:00:00+00:00', 40, 1, 'c1.wav', 'sha')")
     for idx in range(8):
         turn_id = f"{'ab'[idx % 2]}{idx}"
@@ -193,6 +194,41 @@ def test_turns_hearsay_couldnt_decide_are_offered_and_the_operator_s_tag_decides
     utterances = [json.loads(line) for line in (labels_dir / "stream/conversations/c1.jsonl").read_text().splitlines()]
     kinds = {u["utterance_id"]: u["speaker"]["kind"] for u in utterances}
     assert (kinds["c1:0000"], kinds["c1:0002"], kinds["c1:0004"], kinds["c1:0001"]) == ("owner", "stranger", "unknown", "anonymous")
+
+
+def test_turns_that_sound_like_tagged_media_are_offered_unless_the_owner_s_by_voice(portal):
+    client, db_path, _ = portal
+    log_in(client)
+    db = sqlite3.connect(db_path)
+    db.execute("UPDATE turn_speakers SET label = 'owner' WHERE turn_id = 'b5'")
+    db.executemany("INSERT INTO turn_media VALUES (?,?)",
+                   [("b1", 0.95), ("a2", 0.97), ("b3", 0.5), ("b5", 0.99)])
+    db.commit()
+    db.close()
+
+    page = client.get("/").text
+    tv, unsure = page.split("Not sure who spoke")
+    assert "2 turn(s)" in tv and "/audio/b1" in tv and "/audio/a2" in tv
+    assert "/audio/b3" not in page and "/audio/b5" not in page  # under the hint, and the owner's by voice
+    assert "/audio/a2" not in unsure and "3 turn(s)" in unsure  # offered once
+
+    client.post("/turn", data={"turn_id": "b1", "category": "_media"})
+    assert "/audio/b1" not in client.get("/").text
+
+
+def test_a_tag_can_be_undone_and_the_page_s_script_gets_no_page_back(portal):
+    client, _, labels_dir = portal
+    script = {"X-Requested-With": "fetch"}
+    assert client.post("/turn", data={"turn_id": "a0", "category": "_media"}, headers=script).status_code == 401
+    log_in(client)
+
+    assert client.post("/turn", data={"turn_id": "a0", "category": "_media"}, headers=script).status_code == 204
+    assert client.post("/turn", data={"turn_id": "a0", "category": "Alice"}, headers=script).status_code == 404
+    assert "/audio/a0" not in client.get("/").text
+    assert client.post("/turn/undo", data={"turn_id": "a0"}, headers=script).status_code == 204
+    assert "/audio/a0" in client.get("/").text  # offered again
+    tagged, undone = [json.loads(line) for line in (labels_dir / "tags.jsonl").read_text().splitlines()]
+    assert (tagged["name"], undone["name"], undone["at"]) == ("_media", "", tagged["at"])
 
 
 def test_a_spot_that_isnt_a_place_stops_being_offered(portal):
