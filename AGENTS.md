@@ -11,69 +11,12 @@ understanding what was said, it is out of scope.
 
 ## Output contract
 
-The product of Hearsay is a stream of utterance records (`hearsay/stream.py`,
-written to `/mnt/fast/hearsay/stream/` after every reprocess): one JSONL
-file per conversation plus `index.json`. Each utterance has conversation_id,
-utterance_id, start/end (UTC), speaker {kind, name, label}, text,
-text_confidence (Parakeet's token probabilities, each word its least
-likely token) and speaker_confidence {basis,
-owner_similarity}; basis is voice, named, cluster, channel (in a Mac
-recording, the turn was loud on the mic, so the owner's, or on the call, so
-someone else's), diarization (the turn took its label from its diarized
-speaker in the conversation, not its own voice) or none. Speaker kinds: owner, anonymous (labeled
-per conversation by diarized speaker, e.g. "anon A"), stranger, unknown; `person` is
-still a valid kind but never written, and `name` is always null. The operator's
-categories (`hearsay/turns.py`): `_me` turns are the owner's, basis named (or
-diarization), where the operator heard the owner in turns their voice or
-channel gave to someone else; `_stranger` turns are someone else present;
-`_noise`, `_media` and `_music` turns are left out. Owner
-utterances may also carry `affect` {arousal}: how calm or animated the owner
-sounded, about 0-1, from the audio alone (`hearsay/affect.py`); absent where
-the turn wasn't scored. Other people's tone is never inferred. They may also
-carry `delivery` {words_per_second, pauses, pause_seconds, stutters: [{kind
-(repeat, restart, filler), at, words_per_second_before, word}]}: measured from the
-word timings (`hearsay/delivery.py`), not judged; absent where not measured.
-`word` is the stutter's position in `text` split on whitespace (a repeat's
-first copy, a restart's fragment, the filler), so dropping those words gives
-the text without them; null where it couldn't be placed.
-
-Each index entry also lists `taps`: when the owner marked that conversation
-with the pendant's button (a start mark, e.g. a self-note, kept even when
-it's short). The owner can also end a conversation with the button, which
-splits it there. Both are facts about the capture, not interpretations of it.
-So is `places`: the places the operator has named that the conversation
-happened at, in order, each {name, start, end}, from the phone's location
-while it recorded. Never coordinates; a spot nobody named is left out, and
-naming one later adds it retroactively.
-
-Speakers and text change after the fact (naming is retroactive, growing
-conversations are re-transcribed), so the unit of change is a conversation:
-consumers re-read conversations whose index revision changed and replace them
-wholesale. Downstream consumers read this. They never receive audio.
-
-Guarantees consumers rely on (Idea Machine, `docs/ROADMAP.md` §3 there):
-
-- `index.json` has `format_version` (an integer, now 1). Bump it on any change
-  to the index or utterance format that would break a consumer.
-- Files are written atomically (temp file, then rename), conversation files
-  first and `index.json` last, and only when their content changes.
-- `revision` is the first 16 hex characters of the sha256 of the
-  conversation file's bytes, so a consumer can detect a read that raced a
-  rewrite.
-- `transcript_revision` changes when a conversation's transcript does
-  (re-transcription, a growing conversation) and not when only speaker fields
-  do (naming, merging, owner relabeling). Within one transcript_revision a
-  given utterance_id always names the same stretch of speech; across them,
-  ids are renumbered.
-- `forgotten.json` is an append-only list, never rewritten or shrunk, one
-  entry per thing the operator asked Hearsay to forget: {forgotten_at, start,
-  end, conversation_id, utterance_ids, reason}, ids as they were. It is the
-  only deletion signal: anything else that leaves the stream was
-  restructured, not deleted. Forgetting is operator input applied on every
-  reprocess, so re-running from raw never brings forgotten speech back into
-  the stream. Raw payloads and audio of a forgotten span are kept for now:
-  deleting them is slice 12's call, alongside retention. Until the operator
-  can forget (slice 20), the list is empty.
+The product of Hearsay is the utterance stream (`hearsay/stream.py`): who said
+what, when, one JSONL file per conversation plus `index.json`, never audio.
+[docs/stream.md](docs/stream.md) is its contract with Idea Machine, and the
+only place it's written down: fields, speakers, how conversations and their
+ids change, the vocabulary Idea Machine sends back, and the guarantees. A
+change to the stream's format or meaning updates it in the same change.
 
 ## Invariants
 

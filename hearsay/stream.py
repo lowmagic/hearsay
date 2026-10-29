@@ -2,6 +2,7 @@
 
 Written after every reprocess from the database, one JSONL file per
 conversation plus index.json. Consumers never receive audio.
+The contract with consumers is docs/stream.md: change it with this file.
 
 Everything here can change after the fact (the operator's correction of who
 spoke applies to past turns, a growing conversation is re-transcribed), so the unit of
