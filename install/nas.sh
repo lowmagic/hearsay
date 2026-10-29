@@ -207,7 +207,7 @@ say "Hearsay is running from $NAS_ROOT"
 # Manual: the password manager is on the operator's devices.
 cat <<EOF
 
-Portal for naming speakers (save it in your password manager):
+Portal for tagging who spoke (save it in your password manager):
   http://$HEARSAY_TAILNET_IP:$NAS_PORTAL_PORT   (tailnet: encrypted; use this from your phone)
   http://$HEARSAY_LAN_IP:$NAS_PORTAL_PORT   (LAN: unencrypted Wi-Fi)
   username: $(env_get "$NAS_PORTAL_ENV" HEARSAY_PORTAL_USER)

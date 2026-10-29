@@ -32,8 +32,7 @@ enum Settings {
         return String(data: data, encoding: .utf8)
     }
 
-    /// The NAS's naming portal (install/nas.sh prints it), shown in the
-    /// Voices tab.
+    /// The NAS's portal (install/nas.sh prints it), shown in the Tag tab.
     static var portalURL: URL? {
         UserDefaults.standard.string(forKey: portalKey).flatMap(URL.init(string:))
     }

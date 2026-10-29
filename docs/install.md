@@ -220,7 +220,7 @@ Hearsay says only whether you spoke: it names nobody else (since 2026-10-28;
 names given before then are kept in the labels but count for nothing). The
 web portal that `nas.sh` starts, at the addresses it prints, plays the turns
 it couldn't decide, latest first. It listens on the LAN and tailnet only, so
-from your phone use the tailnet address, or the Hearsay app's Voices tab,
+from your phone use the tailnet address, or the Hearsay app's Tag tab,
 which shows the same portal and logs in with the app's capture token. Tag
 each turn Me, Someone else, Media, Music or Noise: Me reaches the stream as
 yours, Someone else as a stranger, and the rest (TV or video talk, songs,
