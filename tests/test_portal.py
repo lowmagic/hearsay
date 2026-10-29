@@ -216,6 +216,21 @@ def test_turns_that_sound_like_tagged_media_are_offered_unless_the_owner_s_by_vo
     assert "/audio/b1" not in client.get("/").text
 
 
+def test_a_tag_can_be_undone_and_the_page_s_script_gets_no_page_back(portal):
+    client, _, labels_dir = portal
+    script = {"X-Requested-With": "fetch"}
+    assert client.post("/turn", data={"turn_id": "a0", "category": "_media"}, headers=script).status_code == 401
+    log_in(client)
+
+    assert client.post("/turn", data={"turn_id": "a0", "category": "_media"}, headers=script).status_code == 204
+    assert client.post("/turn", data={"turn_id": "a0", "category": "Alice"}, headers=script).status_code == 404
+    assert "/audio/a0" not in client.get("/").text
+    assert client.post("/turn/undo", data={"turn_id": "a0"}, headers=script).status_code == 204
+    assert "/audio/a0" in client.get("/").text  # offered again
+    tagged, undone = [json.loads(line) for line in (labels_dir / "tags.jsonl").read_text().splitlines()]
+    assert (tagged["name"], undone["name"], undone["at"]) == ("_media", "", tagged["at"])
+
+
 def test_a_spot_that_isnt_a_place_stops_being_offered(portal):
     from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
 
