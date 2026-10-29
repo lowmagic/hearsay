@@ -6,7 +6,7 @@ x-logging: &logging
   driver: journald
 
 services:
-  # Web portal for naming speakers. Reachable on the LAN and tailnet only:
+  # Web portal for tagging who spoke. Reachable on the LAN and tailnet only:
   # never 0.0.0.0 (the NAS has a public IPv6 address), and nothing of
   # Hearsay's is on the public internet. install/nas.sh exports the two
   # addresses; the loopback defaults only apply when compose runs without them.

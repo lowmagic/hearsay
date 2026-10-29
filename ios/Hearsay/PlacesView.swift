@@ -23,13 +23,12 @@ struct PlacesView: View {
         var coordinate: CLLocationCoordinate2D { .init(latitude: latitude, longitude: longitude) }
     }
 
-    /// One recorded while the phone was at a place or spot: when, who was
-    /// heard, and how it began, to tell where it was; `readings` is the span
-    /// of readings that put it there (unix seconds), to correct them.
+    /// One recorded while the phone was at a place or spot: when, and how it
+    /// began, to tell where it was; `readings` is the span of readings that
+    /// put it there (unix seconds), to correct them.
     struct Conversation: Decodable, Hashable {
         let start: Date
         let end: Date
-        let people: [String]
         let opening: String
         let readings: [Double]?
     }
@@ -446,7 +445,7 @@ private struct PlaceVisits: View {
     }
 }
 
-/// When, who and how it began; its menu corrects the readings that put it
+/// When and how it began; its menu corrects the readings that put it
 /// here: they were wrong, or were really at another named place.
 private struct ConversationRow: View {
     let conversation: PlacesView.Conversation
@@ -460,11 +459,6 @@ private struct ConversationRow: View {
                 Text(conversation.start.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
                      + " – " + conversation.end.formatted(date: .omitted, time: .shortened))
                     .font(.subheadline.weight(.medium))
-                if !conversation.people.isEmpty {
-                    Text(conversation.people.joined(separator: ", "))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
                 if !conversation.opening.isEmpty {
                     Text("\u{201C}\(conversation.opening)\u{201D}")
                         .font(.callout)
