@@ -1,4 +1,4 @@
-<!-- junglestyle/.github code-standards/README.md at b67e538f4a83e8ee7f11716801f1c3d0819be19d. Change it there, then run make sync-standards. -->
+<!-- junglestyle/.github code-standards/README.md at 139149942a6cd3af6386365fa53dd85b8d434bc5. Change it there, then run make sync-standards. -->
 # Standards
 
 Each principle from [PRINCIPLES.md](https://github.com/junglestyle/.github/blob/main/PRINCIPLES.md) turned into rules you can check in review, arranged by where a reviewer looks. When they pull against each other, pick what works and is easiest to undo.
@@ -89,9 +89,9 @@ Few, focused tests of consequential behavior, at boundaries that stay put.
 ## Secrets
 
 - An app reads its secrets from the environment or a file outside the repo. Only a deployment repo commits them, and only encrypted with sops and age. Another tool needs an ADR.
-- `.sops.yaml` at the root encrypts files named `<name>.sops.yaml` with `encrypted_regex: '.*'`. Without a selector, sops leaves keys ending in `_unencrypted` in plaintext. `secrets.example.yaml` at the root lists every encrypted key with a placeholder value.
+- `.sops.yaml` at the root encrypts files named `<name>.sops.yaml` with `encrypted_regex: '.*'`. Without a selector, sops leaves keys ending in `_unencrypted` in plaintext. With `encrypted_regex`, it leaves comments in plaintext, so a `<name>.sops.yaml` file has none. `secrets.example.yaml` at the root lists every encrypted key with a placeholder value, and holds any note about one.
 - The age private key never sits on disk. sops reads it from the password manager through `SOPS_AGE_KEY_CMD`.
-- Edit with `sops edit`, so no decrypted copy is written into the repo. `make check` fails unless each `*.sops.yaml` file has a `sops:` block and every scalar outside it, at any depth, is `ENC[…]`, an empty string, or null. sops leaves only those two unencrypted. It encrypts `false` and `0` like any other value.
+- Edit with `sops edit`, so no decrypted copy is written into the repo. `make check` fails unless each `*.sops.yaml` file has a `sops:` block and no plaintext comment, and every scalar outside the block, at any depth, is `ENC[…]`, an empty string, or null. sops leaves only those two unencrypted. It encrypts `false` and `0` like any other value.
 - A secret written to a host is readable only by its owner, and never shows up in logs or command output.
 - A secret staged on the controller, such as a rendered file waiting to upload or a capture an upgrade carries across, lives outside the repo and is readable only by its owner. The run removes it when it's done. One kept so a failed run can resume is named in the playbook's header, with what removes it.
 - A leaked secret gets rotated. Deleting it from the repo doesn't help, because git keeps it.

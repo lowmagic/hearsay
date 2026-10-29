@@ -1,4 +1,4 @@
-<!-- junglestyle/.github code-standards/shell.md at b67e538f4a83e8ee7f11716801f1c3d0819be19d. Change it there, then run make sync-standards. -->
+<!-- junglestyle/.github code-standards/shell.md at 139149942a6cd3af6386365fa53dd85b8d434bc5. Change it there, then run make sync-standards. -->
 # Shell standards
 
 Decisions for shell scripts, beneath the org [standards](https://github.com/junglestyle/.github/blob/main/code-standards/README.md).
