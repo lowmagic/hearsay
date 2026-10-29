@@ -1,15 +1,15 @@
 import SwiftUI
 import WebKit
 
-/// Correcting who spoke: the NAS's portal (hearsay/portal.py), which already
-/// plays the turns Hearsay could not decide, to tag. Shown here rather than
+/// Tagging who spoke: the NAS's portal (hearsay/portal.py), which plays the
+/// turns Hearsay could not decide, to tag Me, Someone else or not speech. Shown here rather than
 /// rebuilt, so there is one place where tagging works. The portal is on the
 /// tailnet only, so the samples never leave Hearsay's boundary.
 ///
 /// The app logs in with the capture token from Settings, whenever the portal
 /// would ask for a login, so its login page only shows if the token is
 /// refused.
-struct VoicesView: View {
+struct TagView: View {
     @State private var reload = 0
 
     var body: some View {
@@ -23,11 +23,11 @@ struct VoicesView: View {
                         .id(reload)
                         .ignoresSafeArea(edges: .bottom)
                 } else {
-                    ContentUnavailableView("No Portal Address", systemImage: "person.wave.2",
+                    ContentUnavailableView("No Portal Address", systemImage: "tag",
                                            description: Text("Enter it in the Recorder tab's Settings, under Server. install/ios.sh prints it."))
                 }
             }
-            .navigationTitle("Voices")
+            .navigationTitle("Tag")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if Settings.portalURL != nil {
