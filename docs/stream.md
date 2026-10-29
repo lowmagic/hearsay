@@ -89,7 +89,7 @@ within one conversation by diarized speaker (`anon A`, `anon B`, `stranger A`), 
   which beats voice unless the voice clearly says otherwise.
 - `diarization`: the turn was too short or too uncertain to decide itself, and took the label of its diarized speaker
   in the same conversation, whose turns agreed. On any kind, including turns the operator tagged.
-- `named`: the operator tagged the turn `_me` or `_stranger` (below), and diarization or, for `_stranger`, the channel
+- `named`: the operator tagged the turn `_me`, `_stranger` or `_mic` (below), and diarization or, for the last two, the channel
   didn't decide it. The name is from when the operator named people.
 - `none`: on `unknown`, nothing decided it.
 
@@ -102,6 +102,8 @@ categories (`hearsay/turns.py`):
 
 - `_me`: the owner's (`owner`), whatever voice or channel said.
 - `_stranger`: someone else present, `stranger`.
+- `_mic`: someone else present, on a microphone or PA (a class, a talk, an MC), `stranger`. Tagged apart from
+  `_stranger` so it can be treated differently later; in the stream the two are the same.
 - `_noise`, `_media`, `_music`: not speech from anyone present. Left out of the stream, and back if the operator
   refiles them. That's Hearsay's call about who is speaking, not a content filter.
 

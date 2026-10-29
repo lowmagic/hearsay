@@ -56,7 +56,8 @@ def speaker_kind(label: str | None, category: str | None, basis: str | None) -> 
     """(kind, name, basis), or None for turns left out of the stream.
 
     Categories (hearsay/turns.py) are the operator's: _stranger is someone
-    present, so it stays; _me is the owner, in turns their voice or channel
+    present, and so is _mic, someone present on a microphone or PA, so both
+    stay; _me is the owner, in turns their voice or channel
     said were someone else's; every other category (_noise, _media, _music)
     is not speech from anyone present and is left out.
 
@@ -75,7 +76,7 @@ def speaker_kind(label: str | None, category: str | None, basis: str | None) -> 
 def speaker_from_label(label: str | None, category: str | None) -> tuple[str, str | None, str] | None:
     if category == "_me":
         return "owner", None, "named"
-    if category == "_stranger":
+    if category in ("_stranger", "_mic"):
         return "stranger", None, "named"
     if category:
         return None

@@ -111,6 +111,7 @@ def test_a_clip_s_tag_corrects_the_owner_but_a_speaker_s_tag_does_not(tmp_path):
     db.execute("INSERT INTO operator_input VALUES ('c1:0000', 'name', '_noise')")
     db.execute("INSERT INTO operator_input VALUES ('c1:0007', 'clip', '_me')")
     db.execute("INSERT INTO operator_input VALUES ('c1:0002', 'clip', '_stranger')")
+    db.execute("INSERT INTO operator_input VALUES ('c1:0004', 'clip', '_mic')")
     db.commit()
     db.close()
     write_stream(db_path, stream_dir)
@@ -119,6 +120,7 @@ def test_a_clip_s_tag_corrects_the_owner_but_a_speaker_s_tag_does_not(tmp_path):
     assert found["mine"] == ("owner", "voice")
     assert found["too short to tell"] == ("owner", "named")
     assert found["first anon"] == ("stranger", "named")
+    assert found["first anon again"] == ("stranger", "named")  # _mic streams as someone else present
 
 
 def test_revisions_change_only_when_a_conversation_does(tmp_path):
