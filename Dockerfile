@@ -24,7 +24,12 @@ RUN python -c "from huggingface_hub import snapshot_download; snapshot_download(
 RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim', revision='6eba34a2485ea31cb03600241787c3a5edab8626', local_dir='/models/affect', allow_patterns=['*.json', '*.safetensors'])" \
     && HF_HUB_OFFLINE=1 python -c "from pathlib import Path; from hearsay.affect import load_model; load_model(Path('/models/affect'))" \
     && chmod -R a+rX /models
-ENV HEARSAY_MODEL_DIR=/models/ecapa HEARSAY_AFFECT_MODEL_DIR=/models/affect HF_HUB_OFFLINE=1
+# The AudioSet tagger that scores songs (hearsay/music.py), the same way.
+RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('MIT/ast-finetuned-audioset-16-16-0.442', revision='bf4d03f36ce5904b0daf96023cef4c82b1fe3d26', local_dir='/models/music', allow_patterns=['*.json', '*.safetensors'])" \
+    && HF_HUB_OFFLINE=1 python -c "from pathlib import Path; from hearsay.music import load_model; load_model(Path('/models/music'))" \
+    && chmod -R a+rX /models
+ENV HEARSAY_MODEL_DIR=/models/ecapa HEARSAY_AFFECT_MODEL_DIR=/models/affect HEARSAY_MUSIC_MODEL_DIR=/models/music \
+    HF_HUB_OFFLINE=1
 # Last in the stage, so a new commit doesn't rebuild the layers above.
 ARG HEARSAY_COMMIT=unknown
 ENV HEARSAY_COMMIT=$HEARSAY_COMMIT

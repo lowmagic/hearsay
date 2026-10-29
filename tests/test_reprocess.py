@@ -18,7 +18,7 @@ def test_a_failed_run_leaves_the_previous_database_in_place(tmp_path, monkeypatc
     monkeypatch.setattr(reprocess, "find_conversations", fail)
     with pytest.raises(RuntimeError):
         reprocess.run(dirs["raw"], db_path, dirs["audio"], dirs["labels"], dirs["models"],
-                      dirs["transcripts"], dirs["imports"], dirs["stream"], dirs["models"])
+                      dirs["transcripts"], dirs["imports"], dirs["stream"], dirs["models"], dirs["models"])
 
     assert db_path.read_bytes() == b"the database readers are using"
 

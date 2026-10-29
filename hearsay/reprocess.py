@@ -15,9 +15,10 @@ NAS keeps snapshots, so every rewritten byte is kept many times). A schema
 change replaces the changed table inside the same transaction. Deleting
 the database is always safe: the next run fills a new one from raw.
 
-Slow steps (voice detection, speaker embeddings) are cached by audio content
-next to the database. A run waits for any other to finish (one corral starts
-and one started by hand would otherwise overlap and break each other).
+Slow steps (voice detection, speaker embeddings, the audio models) are cached
+by audio content next to the database. A run waits for any other to finish
+(one corral starts and one started by hand would otherwise overlap and break
+each other).
 """
 
 import fcntl
@@ -35,6 +36,7 @@ from hearsay.capture import load_captures
 from hearsay.conversations import find_conversations
 from hearsay.imports import load_imports
 from hearsay.media import score_media
+from hearsay.music import score_music
 from hearsay.parse import ParseFailed, rebuild
 from hearsay.affect import score_affect
 from hearsay.delivery import measure_delivery
@@ -51,7 +53,8 @@ def report(title: str, counts: dict) -> None:
 
 
 def run(raw_dir: Path, db_path: Path, audio_dir: Path, labels_dir: Path, model_dir: Path,
-        transcripts_dir: Path, imports_dir: Path, stream_dir: Path, affect_model_dir: Path) -> None:
+        transcripts_dir: Path, imports_dir: Path, stream_dir: Path, affect_model_dir: Path,
+        music_model_dir: Path) -> None:
     lock = open(db_path.with_name("reprocess.lock"), "w")
     fcntl.flock(lock, fcntl.LOCK_EX)
     scratch = tempfile.TemporaryDirectory(prefix="hearsay-reprocess-")
@@ -70,6 +73,7 @@ def run(raw_dir: Path, db_path: Path, audio_dir: Path, labels_dir: Path, model_d
         report("Operator labels and tags, matched to turns:", record_operator_input(staging, labels_dir))
         report("Speaker embeddings and labels:", label_speakers(raw_dir, staging, labels_dir, model_dir, cache))
         report("Turns that sound like tagged media:", score_media(staging))
+        report("Turns that sound like songs:", score_music(raw_dir, staging, music_model_dir, cache))
         report("The owner's tone of voice:", score_affect(raw_dir, staging, affect_model_dir, cache))
         report("How the owner delivered their turns:", measure_delivery(staging, transcripts_dir))
         record_run(staging)
@@ -163,10 +167,11 @@ def record_run(db_path: Path) -> None:
 def main() -> None:
     env = {name: Path(os.environ[f"HEARSAY_{name.upper()}"]) for name in
            ("raw_dir", "db", "audio_dir", "labels_dir", "model_dir", "transcripts_dir", "imports_dir",
-            "stream_dir", "affect_model_dir")}
+            "stream_dir", "affect_model_dir", "music_model_dir")}
     try:
         run(env["raw_dir"], env["db"], env["audio_dir"], env["labels_dir"], env["model_dir"],
-            env["transcripts_dir"], env["imports_dir"], env["stream_dir"], env["affect_model_dir"])
+            env["transcripts_dir"], env["imports_dir"], env["stream_dir"], env["affect_model_dir"],
+            env["music_model_dir"])
     except ParseFailed as e:
         print(e, file=sys.stderr)
         print(f"{env['db']} and {env['audio_dir']} left unchanged.", file=sys.stderr)
