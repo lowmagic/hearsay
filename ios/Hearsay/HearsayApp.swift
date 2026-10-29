@@ -64,8 +64,8 @@ struct HearsayApp: App {
                 StatusView(pendant: recorder.pendant, pause: recorder.pause, buttons: recorder.buttons,
                            uploader: recorder.uploader, location: recorder.location)
                     .tabItem { Label("Recorder", image: "Voiceprint") }
-                VoicesView()
-                    .tabItem { Label("Voices", systemImage: "person.wave.2") }
+                TagView()
+                    .tabItem { Label("Tag", systemImage: "tag") }
                 PlacesView()
                     .tabItem { Label("Places", systemImage: "map") }
             }

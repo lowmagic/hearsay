@@ -4,7 +4,7 @@ Listens only on the LAN and tailnet addresses (install/compose.yaml), never
 the public internet. Login is a plain HTML form, not an HTTP auth
 dialog, so password managers can fill it; sessions are HMAC-signed cookies.
 The iPhone app logs in instead with the capture token it already holds
-(POST /login/app, bearer): the portal shows in its Voices tab, and whoever
+(POST /login/app, bearer): the portal shows in its Tag tab, and whoever
 holds that token can already send Hearsay audio. The app's own Places map
 sends the token on each request instead: GET /places.json, and POST /places
 with the same fields as the page's forms.
@@ -433,9 +433,8 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
         def entry(cid: str, start: float, end: float, at: list[float]) -> dict:
             # When and how it began, to tell from what was said where it was;
             # "readings" is the span of the readings that put it there, to correct.
-            # "people" stays, empty, for the app: Hearsay names nobody now.
-            return {"start": start, "end": end, "people": [],
-                    "opening": opening.get(cid, "")[:OPENING_CHARACTERS], "readings": [min(at), max(at)]}
+            return {"start": start, "end": end, "opening": opening.get(cid, "")[:OPENING_CHARACTERS],
+                    "readings": [min(at), max(at)]}
 
         def at_spot(times: list[float]) -> list[dict]:
             found = []
