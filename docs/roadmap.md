@@ -569,3 +569,7 @@ Music, checked the same day, needs nothing: AST's Singing class reached no
 more than 0.13 on any of 9,837 turns, so songs don't become turns. Music is
 only under speech (34 of 1,072 minutes above 0.5, bars and a dance class),
 and a music filter at that level would have dropped 91 of the owner's turns.
+inaSpeechSegmenter, built for speech / music detection, agreed: of 63
+minutes of music in all the recordings, 48 were outside any turn and never
+reach the stream, and the turns it called mostly music were people talking
+over it, 27 of them the owner's by voice.
