@@ -81,7 +81,13 @@ def detect_speech(raw_dir: Path, bursts: list, cache: Cache | None = None) -> li
     # Imported here: torch is heavy, and only the worker image has it.
     import numpy as np
     import torch
+
+    # silero_vad sets torch to one thread for the whole process when it's
+    # imported (silero_vad/model.py). Put it back, or every model after it
+    # (speakers, music, affect) runs on one core.
+    threads = torch.get_num_threads()
     from silero_vad import get_speech_timestamps, load_silero_vad
+    torch.set_num_threads(threads)
 
     runs = []
     for start, end, paths in bursts:
