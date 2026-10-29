@@ -488,9 +488,9 @@ turns Hearsay couldn't decide. The rest is in [the roadmap as it was](https://gi
 Everything is rebuilt from raw audio every hour, so no audio can go (slice
 12). Instead keep, per turn, what its audio produced: times, words and their
 timings, diarized speaker, speaker embedding (with the model that made it),
-owner similarity, affect and delivery. About 11 MB for 14,000 turns, against
-9 GB of audio and decoded audio. Reprocess reads audio only for
-conversations that are new or still growing, and rebuilds the rest from
+owner similarity, affect, delivery and music scores. About 11 MB for
+14,000 turns, against 9 GB of audio and decoded audio. Reprocess reads audio
+only for conversations that are new or still growing, and rebuilds the rest from
 these records and the operator's labels. Who is speaking (thresholds,
 clustering, voiceprints, names) still re-runs on every turn ever recorded; what came out of
 the audio is fixed once its audio is gone. A new speaker model applies only
@@ -573,3 +573,33 @@ inaSpeechSegmenter, built for speech / music detection, agreed: of 63
 minutes of music in all the recordings, 48 were outside any turn and never
 reach the stream, and the turns it called mostly music were people talking
 over it, 27 of them the owner's by voice.
+Revised the same day: some songs do become turns. The operator had tagged
+five lines of rap at a party `_music` (c20261011T222350Z, 26 s, all not the
+owner by voice), and AudioSet files rapping as its own class under Singing,
+which the check read alone. Slice 22.
+
+## 22. Songs that become turns
+
+Near a speaker playing music, the transcriber sometimes writes down the
+song's words, and they reach the stream as someone's turns. Music under
+people talking is real speech and stays; only turns whose words are the
+song's go, as `_music`, like the operator's own tags. Pure music without talk
+never forms a conversation (Silero hears no speech in it), and that stays.
+
+- Score: every turn on reprocess, by AST's AudioSet classes for speech,
+  singing (Rapping among them) and music, cached by audio like affect
+  (`hearsay/music.py`). In the database only, not the stream.
+- Label: `hearsay-label music` plays turns spread across the scores and
+  asks whether the words are the song or someone talking, drawn from the
+  dance nights (bachata and salsa under talk: c20260928T234205Z,
+  c20260929T003645Z, c20260929T014401Z, c20260930T232900Z,
+  c20261001T003530Z, c20261001T005700Z, c20261007T235449Z,
+  c20261008T000830Z, c20261008T005309Z, c20261014T232448Z) and the turns
+  tagged `_music`. Older `_media` tags mix music and TV, so they aren't
+  music labels. The report gives precision and recall per threshold.
+- Apply: once about 100 are labeled, turns above a threshold chosen for
+  precision on song (dropping real speech is worse than keeping some
+  lyrics) are `_music` without a tag. The operator's tags always win.
+
+Done when: songs' words rarely reach the stream, and the labeled turns say
+the threshold drops almost no one talking.
