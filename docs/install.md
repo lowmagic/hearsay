@@ -195,23 +195,10 @@ as a command with
 ## Reading the utterance stream (consumers)
 
 `/mnt/fast/hearsay/stream/` (readable by the `apps` group) holds Hearsay's
-output, rewritten after every reprocess:
-
-- `index.json`: every conversation with start, end, `open` (still going when
-  the audio stopped), `transcribed`, `taps` (times the owner marked it with
-  the pendant's button), utterance count, `revision`, `transcript_revision`,
-  and `file`, under a top-level `format_version`.
-- `conversations/<conversation_id>.jsonl`: one utterance per line, in time
-  order; fields are described under Output contract in [`AGENTS.md`](../AGENTS.md).
-- `forgotten.json`: append-only list of what the operator asked Hearsay to
-  forget.
-
-Treat each conversation as a unit: when its `revision` changes, re-read its
-file and replace everything you had for it. Corrections apply retroactively and
-conversations get re-transcribed as they grow, so individual utterances can
-change or disappear; utterance ids keep their meaning only while
-`transcript_revision` does. The guarantees are under Output contract in
-[`AGENTS.md`](../AGENTS.md). No audio is ever in the stream.
+output, rewritten after every reprocess: `index.json`, one file per
+conversation under `conversations/`, and `forgotten.json`. No audio is ever in
+it. What every field means, when it changes and what a consumer can rely on
+is in [stream.md](stream.md).
 
 ## Importing audio the live stream missed
 

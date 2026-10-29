@@ -60,7 +60,8 @@ flowchart LR
 - **A real contract for consumers.** The stream has a format version and atomic writes. Each file
   carries a content-hash revision so a reader can detect a race. A separate transcript revision says
   when utterance ids get renumbered, and there's an append-only forget list. Corrections apply
-  retroactively, so the unit of change is a whole conversation.
+  retroactively, so the unit of change is a whole conversation. The contract is
+  [docs/stream.md](docs/stream.md).
 - **Attribution from more than one signal.** Voice embeddings decide first. Mac recordings also
   know which channel a turn was loud on, and short turns inherit their diarized speaker's label.
   What it can't call, I tag one turn at a time in the portal: me, someone else, or not speech.
