@@ -10,9 +10,12 @@ sends the token on each request instead: GET /places.json, and POST /places
 with the same fields as the page's forms.
 
 Hearsay says only whether the owner spoke (2026-10-28). The front page plays
-the turns it couldn't decide, and the operator tags each: Me, Someone else,
-or not speech (media, music, noise). A tag is written to labels/tags.jsonl,
-the same durable input reprocess reads, with the turn's time span so it
+the turns it couldn't decide, and those that sound like the media the operator
+has tagged (hearsay/media.py), and the operator tags each: Me, Someone else,
+or not speech (media, music, noise). Tagging a turn collapses it to an
+Undo button rather than reloading the page; undoing appends a record that
+takes the tag back. A tag is written to labels/tags.jsonl, the same durable
+input reprocess reads, with the turn's time span so it
 survives re-transcription, and applies to that turn whatever its voice said
 (hearsay.turns.categories).
 
@@ -40,6 +43,7 @@ from urllib.parse import parse_qs, quote, unquote
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from hearsay.media import HINT
 from hearsay.places import (
     LOOKBACK,
     MAX_RADIUS,
@@ -80,6 +84,17 @@ WHERE ts.label IS NULL AND ca.wav_file IS NOT NULL AND t.end - t.start >= ?
 ORDER BY ca.zero_at DESC, t.start DESC
 """
 
+# Turns that sound like tagged media, unless their own voice or channel said the owner's.
+MEDIA_SQL = """
+SELECT t.turn_id, t.conversation_id, t.start, t.end, t.text, ca.zero_at
+FROM turn_media tm
+JOIN turns t ON t.turn_id = tm.turn_id
+JOIN turn_speakers ts ON ts.turn_id = t.turn_id
+JOIN conversation_audio ca ON ca.conversation_id = t.conversation_id
+WHERE tm.score >= ? AND ca.wav_file IS NOT NULL AND NOT (ts.label IS 'owner' AND ts.basis IN ('voice', 'channel'))
+ORDER BY ca.zero_at DESC, t.start DESC
+"""
+
 STYLE = """
 :root { color-scheme: light dark; --fg: #111; --bg: #fff; --muted: #666; --line: #ddd; --accent: #2458d6; }
 @media (prefers-color-scheme: dark) { :root { --fg: #eee; --bg: #121212; --muted: #999; --line: #333; --accent: #7fa4ff; } }
@@ -105,6 +120,36 @@ button { font: inherit; width: 100%; padding: 0.8rem; margin-top: 0.6rem; }
 textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 0.6rem; min-height: 12rem; }
 .added { color: #2a8a3a; }
 .removed { color: #c33; text-decoration: line-through; }
+.tagged { display: flex; align-items: center; gap: 0.5rem; }
+.tagged span { flex: 1; }
+.tagged button { width: auto; margin: 0; padding: 0.4rem 1rem; }
+"""
+
+# Tags a clip without leaving the page, and collapses it to an Undo button that
+# restores it. Without scripts the forms post as usual and the page reloads.
+TAG_SCRIPT = """
+const headers = {'X-Requested-With': 'fetch'};
+async function post(path, fields) {
+  const response = await fetch(path, {method: 'POST', headers, body: new URLSearchParams(fields)});
+  if (!response.ok) location.reload();  // logged out, or the turn is gone
+  return response.ok;
+}
+document.addEventListener('submit', async event => {
+  const form = event.target;
+  if (!form.matches('form.clip') || !event.submitter) return;
+  event.preventDefault();
+  const item = form.closest('li'), turn_id = form.elements.turn_id.value, saved = [...item.childNodes];
+  if (!await post('/turn', {turn_id, category: event.submitter.value})) return;
+  const row = document.createElement('div'), said = document.createElement('span'), undo = document.createElement('button');
+  row.className = 'tagged';
+  said.className = 'muted';
+  said.textContent = 'Tagged ' + event.submitter.textContent;
+  undo.type = 'button';
+  undo.textContent = 'Undo';
+  undo.onclick = async () => { if (await post('/turn/undo', {turn_id})) item.replaceChildren(...saved); };
+  row.append(said, undo);
+  item.replaceChildren(row);
+});
 """
 
 
@@ -232,13 +277,13 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, user: str, pass
             db.close()
         return {t for t, value in found.clips.items() if value.startswith("_")}
 
-    def load_unsure() -> list[dict]:
-        """Turns Hearsay couldn't decide and the operator hasn't tagged, latest first, with
-        when each was said (unix seconds) and the named place it was said at."""
+    def load_turns(sql: str, *params) -> list[dict]:
+        """The query's turns the operator hasn't tagged, latest first, with when each was
+        said (unix seconds) and the named place it was said at."""
         db = connect()
         db.row_factory = sqlite3.Row
         try:
-            rows = [dict(r) for r in db.execute(UNSURE_SQL, (MIN_UNSURE_SECONDS,))]
+            rows = [dict(r) for r in db.execute(sql, params)]
             places = {}
             for conversation_id, place, start, end in db.execute(
                     "SELECT conversation_id, place, start, end FROM conversation_places ORDER BY start"):
@@ -314,37 +359,59 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, user: str, pass
     async def index(request: Request) -> Response:
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
-        unsure = load_unsure()
+        media = load_turns(MEDIA_SQL, HINT)
+        offered = {s["turn_id"] for s in media}
+        unsure = [s for s in load_turns(UNSURE_SQL, MIN_UNSURE_SECONDS) if s["turn_id"] not in offered]
         players = "".join(f"<li>{clip_player(s)}</li>" for s in unsure[:UNSURE])
-        return page("Hearsay", f"""
+        media_players = "".join(f"<li>{clip_player(s)}</li>" for s in media[:UNSURE])
+        media_section = f"""
+<h1>Sounds like TV</h1>
+<p class="muted">{len(media)} turn(s) that sound like what you've tagged Media, latest first.</p>
+<ul>{media_players}</ul>""" if media else ""
+        return page("Hearsay", f"""{media_section}
 <h1>Not sure who spoke</h1>
 <p class="muted">{len(unsure)} turn(s) Hearsay couldn't tell were you or not, latest first.
 Tag each; it applies at the next reprocess. · <a href="/places">Places</a> · <a href="/words">Words</a></p>
 <ul>{players or "<li class='muted'>Nothing to check.</li>"}</ul>
 <h2>Transcription</h2><ul><li><a href="/words">Words <span class="muted">· {len(boosted(read_committed(labels_dir)))} in use
 {"· a draft is waiting" if read_draft(labels_dir) is not None else ""}</span></a></li></ul>
-<form method="post" action="/logout"><button type="submit">Log out</button></form>""")
+<form method="post" action="/logout"><button type="submit">Log out</button></form>
+<script>{TAG_SCRIPT}</script>""")
 
-    @app.post("/turn")
-    async def tag_turn(request: Request) -> Response:
-        if not logged_in(request):
-            return RedirectResponse("/login", status_code=303)
-        form = parse_qs((await request.body()).decode())
-        turn_id = form.get("turn_id", [""])[0]
-        category = form.get("category", [""])[0]
+    def find_turn(turn_id: str) -> tuple | None:
         db = connect()
         try:
-            turn = db.execute(
+            return db.execute(
                 "SELECT ca.zero_at, t.start, t.end FROM turns t"
                 " JOIN conversation_audio ca ON ca.conversation_id = t.conversation_id WHERE t.turn_id = ?",
                 (turn_id,)).fetchone()
         finally:
             db.close()
-        if turn and category in CATEGORIES:
-            # Absolute times, so the tag survives new transcripts and boundaries;
-            # the turn id only for reference.
-            append_tag({"type": "clip", "at": [wall(*turn)], "turn_ids": [turn_id], "name": category})
-        return RedirectResponse("/", status_code=303)
+
+    async def tag(request: Request, undo: bool) -> Response:
+        """Tag a turn, or take its tag back: a clip record with no name (hearsay.turns.resolve).
+        The page's script gets 204 or 401 instead of a page to follow."""
+        script = request.headers.get("x-requested-with") == "fetch"
+        if not logged_in(request):
+            return Response(status_code=401) if script else RedirectResponse("/login", status_code=303)
+        form = parse_qs((await request.body()).decode())
+        turn_id = form.get("turn_id", [""])[0]
+        category = "" if undo else form.get("category", [""])[0]
+        turn = find_turn(turn_id)
+        if not turn or not (undo or category in CATEGORIES):
+            return Response(status_code=404) if script else RedirectResponse("/", status_code=303)
+        # Absolute times, so the tag survives new transcripts and boundaries;
+        # the turn id only for reference.
+        append_tag({"type": "clip", "at": [wall(*turn)], "turn_ids": [turn_id], "name": category})
+        return Response(status_code=204) if script else RedirectResponse("/", status_code=303)
+
+    @app.post("/turn")
+    async def tag_turn(request: Request) -> Response:
+        return await tag(request, undo=False)
+
+    @app.post("/turn/undo")
+    async def untag_turn(request: Request) -> Response:
+        return await tag(request, undo=True)
 
     @app.get("/places")
     async def show_places(request: Request) -> Response:

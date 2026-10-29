@@ -217,14 +217,16 @@ live audio, the live audio wins. Importing the same file twice does nothing.
 ## Correcting who spoke (phone or any browser)
 
 Hearsay says only whether you spoke: it names nobody else (since 2026-10-28;
-names given before then are kept in the labels but count for nothing). The
-web portal that `nas.sh` starts, at the addresses it prints, plays the turns
-it couldn't decide, latest first. It listens on the LAN and tailnet only, so
+names given before then are kept in the labels and only teach the TV hint
+what people sound like). The web portal that `nas.sh` starts, at the
+addresses it prints, plays the turns that sound like the TV you've tagged
+Media, then the turns it couldn't decide, latest first. It listens on the LAN and tailnet only, so
 from your phone use the tailnet address, or the Hearsay app's Tag tab,
 which shows the same portal and logs in with the app's capture token. Tag
 each turn Me, Someone else, Media, Music or Noise: Me reaches the stream as
 yours, Someone else as a stranger, and the rest (TV or video talk, songs,
-noise) is left out. A tag applies to that turn whatever its voice said.
+noise) is left out. A tag applies to that turn whatever its voice said. The more TV you tag
+Media, the better the TV list gets; it never leaves anything out itself.
 
 The portal's Places page lists spots where the phone recorded and no named
 place is near (how long, which days, a map link); name them there. Only these
