@@ -53,6 +53,15 @@ cluster with a name and merging clusters. Tags and merges apply
 retroactively to all past utterances.
 
 Done when: tagging a speaker once relabels their past conversations.
+Revised 2026-10-28, me / not me: Hearsay names nobody but the owner.
+Naming people and the slices built on it (14, 15 and 18) are shelved and
+their code is gone; names already given stay in labels/tags.jsonl, unread.
+The portal plays the turns Hearsay couldn't decide, and the operator tags
+each Me, Someone else, or not speech. Checked by ear the same day on
+Hearsay's own turns: an owner turn by voice was right 49 of 49 times, one by
+diarization 147 of 162 (the misses are short interjections). Idea Machine's
+M2 validates me / not me with these.
+
 
 ## 6. Local transcription (WhisperX)
 
@@ -248,15 +257,13 @@ retention, and not held for the window.
 Done when: non-owner audio is actually gone from disk, a thrown-out
 stretch's audio is gone too, and nothing that depends on either breaks.
 
-Resolved 2026-10-25: retention waits for slices 18 and 19, not for the
+Resolved 2026-10-25: retention waits for slices 20 and 19, not for the
 models. Slice 19 keeps what audio produced, so only the audio-dependent
 models (transcription, diarization, speaker embeddings) need tuning before
 it goes; who is speaking re-runs from stored vectors for good. Then all
 audio past the window is deleted, the owner's too, except the enrollment
 windows' (a few minutes, so the owner can be enrolled in a new speaker
-model). Audio still waiting for review (slice 18) is kept up to 30 days past
-the window, then its turns keep the label they have, unconfirmed. The
-invariants on raw payloads and re-running from raw change with it.
+model). The invariants on raw payloads and re-running from raw change with it.
 
 ## 13. Where a conversation happened
 
@@ -354,63 +361,14 @@ for a place or a spot.
 
 ## 14. Place as a hint for who is speaking
 
-Shelved 2026-10-28, its code removed: Hearsay says only whether the owner
-spoke and names nobody else, so there is no name for a place to suggest. Kept as the record of what was
-measured.
-
-People are tied to places (the bartender at the Chill Room, a coworker at
-the office), and operator names already carry them ("Robert (Chill Room)").
-Use where a conversation happened to suggest who an unnamed speaker is: in
-the portal first, ranking the people heard at that place ahead of
-others, then perhaps as weak evidence in clustering. Voice stays the
-judge: a place never names anyone on its own, and never overrides a voice
-label or the operator's names.
-
-Done when: naming a cluster in the portal offers the people heard at that
-place first, and that measurably saves the operator time.
-
-Measured, with slice 15's hint, by `python3 -m hearsay.hints` on the NAS:
-from tags.jsonl alone, each hint's namings taken, typed, typed though
-offered and not offered (name tags record what was "offered" since
-2026-10-13), how many taken were undone (a later tag renaming the same
-turns), and the median seconds per naming. First reading, 2026-10-13: of 9
-people named since the hint, 5 were taken from it (1 later retagged
-`_media`), and neither of 2 `_media` namings came from the media hint.
-
-Voice joined place as a hint on 2026-10-13: an unnamed cluster offers the
-named people it sounds most like though not enough to join (up to three,
-average similarity 0.20 or more, computed on reprocess into cluster_voices).
-Checked first, leaving out each speaker the operator named: of the 16 under
-the 0.40 threshold to their own person, the right person came first for 9
-and in the top three for 14. Taken as `"via": "voice"`, counted by
-hearsay/hints.py like the others; its undo rate is the guard against a tap
-merging two people.
+Shelved 2026-10-28 with naming people (slice 5), its code removed. What was
+built and measured is in [the roadmap as it was](https://github.com/junglestyle/hearsay/blob/068cf870af04516a53421b14e5133dbbdadddb38/docs/roadmap.md#14-place-as-a-hint-for-who-is-speaking).
 
 ## 15. Media hint
 
-Shelved 2026-10-28, its code removed: Hearsay says only whether the owner
-spoke and names nobody else, so there are no clusters to offer `_media` on; the operator tags media one turn at a time. Kept as the record of what was
-measured.
-
-TV and video dialogue is a large share of other voices (on 2026-10-07, 85 of
-346 minutes were tagged `_media`), and each evening of it is tagged by hand.
-Measured first, leave one conversation out against those tags: off-the-shelf
-sound-event models barely beat chance, because the media here is dialogue,
-not music (AudioSet's Music class scored those turns lower than people, AUC
-0.30; Television 0.55, Radio 0.70; CLAP prompts 0.39), and little of the
-`_noise` was music either. Speaker embeddings, which carry the channel as
-well as the voice, separated it almost completely (AUC 0.98, 94% of media
-minutes at under 1% of people's speech), but only for the one TV at home:
-media elsewhere went unmatched.
-
-So it is a hint, not a tag (`hearsay/media.py`): each reprocess learns from
-the operator's own tags, and a cluster that averages 0.8 or more offers
-`_media` for one tap; at that bar 5 of 8 media clusters and none of 21 named
-people's would have been offered it. Taken hints are marked `"via": "media"`
-in tags.jsonl. It spreads beyond home only as media elsewhere is tagged.
-
-Done when: taken media hints are rarely undone, and they measurably cut the
-time spent tagging media.
+Shelved 2026-10-28 with naming people (slice 5), its code removed. What was
+measured (sound-event models and speaker embeddings on media) is in
+[the roadmap as it was](https://github.com/junglestyle/hearsay/blob/068cf870af04516a53421b14e5133dbbdadddb38/docs/roadmap.md#15-media-hint).
 
 ## 16. The owner's tone of voice
 
@@ -521,44 +479,9 @@ left out (the tracker is noisy at word ends).
 
 ## 18. Review that shows what was said, and gates new matches
 
-Shelved 2026-10-28, its code removed: Hearsay says only whether the owner
-spoke and names nobody else, so there are no matches to a named person to gate. Clips showing their words, time and place (done 2026-10-25) carried over to the portal's list of turns Hearsay couldn't decide. Kept as the record of what was
-measured.
-
-The operator names speakers by ear, but a clip alone doesn't say which voice
-is meant when several talk, and a wrong place goes unnoticed. And once a
-cluster is named, everything that later joins it takes the name unseen: a
-stranger who sounds like a friend is filed under the friend, and each such
-turn pulls the friend's voice toward theirs.
-
-- Every clip the portal plays shows its words, when it was said, and the
-  named place it was said at.
-- A voiceprint per person, the weighted average of pieces kept per
-  contribution (their confirmed turns in one conversation, or an enrollment
-  window), each with its date and seconds of speech, so a bad one can be
-  taken out. Only the operator's input feeds it: names, enrollment, and
-  matches the operator accepted, never matches Hearsay made on its own.
-  Pieces count alike to start; ageing older ones out is for later, if a
-  replay shows they hurt.
-- Measured first, as in slice 14: leave each named speaker out and compare
-  matching against voiceprints with today's average-linkage clustering (35
-  of 63 back, 2 wrong, on 2026-10-13), one voiceprint per person against one
-  per source (the pendant, the call side of a Mac recording), since
-  embeddings carry the channel (slice 15).
-- New matches to a named person come in batches to gate, one diarized
-  speaker in one conversation at a time, each scored against the voiceprint,
-  flagged when the person has never been heard at that place, and showing
-  how long until its audio is deleted (slice 12). Accept confirms; reject
-  says "not them" without saying who, and keeps that speaker from that
-  person the way different names are kept apart now, so it comes back to be
-  named.
-- Matches reach the stream at once, marked unconfirmed until accepted;
-  additive, so `format_version` stays 1.
-
-Done when: the operator gates new matches in batches, rejected speakers stay
-apart from the person, and voiceprints come only from the operator's input.
-
-Started 2026-10-25 with the words, time and place on every clip.
+Shelved 2026-10-28 with naming people (slice 5), its code removed. Clips
+with their words, time and place (2026-10-25) carried over to the portal's
+turns Hearsay couldn't decide. The rest is in [the roadmap as it was](https://github.com/junglestyle/hearsay/blob/068cf870af04516a53421b14e5133dbbdadddb38/docs/roadmap.md#18-review-that-shows-what-was-said-and-gates-new-matches).
 
 ## 19. Turns kept without their audio
 

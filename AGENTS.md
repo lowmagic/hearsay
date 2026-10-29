@@ -29,6 +29,7 @@ change to the stream's format or meaning updates it in the same change.
   It is never exposed on the public internet (nothing of Hearsay's is; the
   Omi webhook receiver and its Cloudflare tunnel were retired in 2026-10)
   and never goes to third-party services or downstream consumers.
+  A work machine is never used for capture and never holds audio.
 - Non-owner audio is deleted after embedding and transcription, per retention
   policy. Owner audio may be kept.
 - Speaker embeddings are retained indefinitely; tagging and merging must be
@@ -42,49 +43,14 @@ change to the stream's format or meaning updates it in the same change.
 
 ## Current slice
 
-Me / not me (2026-10-28): Hearsay names nobody but the owner. Naming people,
-place hints for names (slice 14), the media hint (slice 15) and gating new
-matches (slice 18) are shelved; their code is gone, and names already given
-stay in labels/tags.jsonl, unread. The portal plays the turns Hearsay
-couldn't decide and the operator tags each Me, Someone else or not speech.
-Next, re-measure owner / not-owner by ear on Hearsay's own turns: Idea
-Machine's M2 validates me / not me with it, and slice 12 waits for M2. Then
-slice 20 (throw out what was said, and hold the stream a week), then slice
-19 (turns kept without their audio) and slice 12 (retention), which change
-the invariants on raw payloads and re-running from raw.
-
-Slice 17: how the owner holds a turn (see the roadmap). Owner utterances
-carry `delivery`, from Parakeet's word timings (`hearsay/delivery.py`):
-speaking rate, pauses, and stutters (repeats, restarts, fillers) each with the
-speaking rate before it. Stutter detection was checked by ear (20 of 24
-real). No assertiveness label: ending pitch, rate, pauses and trailing off
-didn't match the owner's blind ratings of calm turns.
-
-Slice 16: the owner's tone of voice (see the roadmap). Owner turns labeled by
-voice or channel are scored on reprocess (`hearsay/affect.py`, audeering's
-wav2vec2, CC-BY-NC-SA, baked into the worker image); only arousal reaches the
-stream, the one dimension checked by ear. Valence waits for its own check
-(tone without words, and a blind rating); dominance follows arousal for every
-voice measured and stays out. Other people's tone is never inferred.
-
-Slice 13 (where a conversation happened) is done: the iPhone app samples the
-owner's location while recording (precise fixes while moving, an anchor
-while staying put, `ios/Hearsay/Movement.swift`; records in the capture
-upload, `hearsay/capture.py`), and each conversation in the stream lists the
-places the operator named that it happened at (`hearsay/places.py`,
-labels/places.jsonl), never coordinates.
-
-Slice 12 (retention) follows slices 20 and 19, and Idea Machine's M2: then all audio past a
-rolling window (90 days to start) is deleted, the owner's too except the
-enrollment windows', and so is the audio of every stretch the operator
-threw out.
-
-Slice 11 (Mac audio capture) is done: a menu-bar app on the operator's
-personal Mac records the mic and the call as separate channels, only after
-the operator says yes to a Zoom call's prompt (`mac/`, `install/mac.sh`).
-Each turn is attributed by the channel it's loud on (`with_channel` in
-`hearsay/speakers.py`), unless the voice clearly says otherwise; a work
-machine is never used for capture or holds audio.
+Me / not me is done (2026-10-28, roadmap slice 5): Hearsay names nobody but
+the owner, and the portal plays the turns it couldn't decide for the
+operator to tag. Next, slice 20 (throw out what was said, and hold the
+stream a week), then slice 19 (turns kept without their audio) and slice 12
+(retention), which change the invariants on raw payloads and re-running from
+raw. Slice 12 also waits for Idea Machine's M2, which validates me / not me.
+Every slice, done or shelved, and what was measured for it is in the
+[roadmap](docs/roadmap.md).
 
 ## Coding standards
 
