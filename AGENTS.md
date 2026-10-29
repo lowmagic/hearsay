@@ -45,7 +45,9 @@ change to the stream's format or meaning updates it in the same change.
 
 Me / not me is done (2026-10-28, roadmap slice 5): Hearsay names nobody but
 the owner, and the portal plays the turns it couldn't decide for the
-operator to tag. Next, slice 20 (throw out what was said, and hold the
+operator to tag. Now slice 21: the portal also offers the turns that sound
+like the media the operator has tagged (`hearsay/media.py`), so TV is tagged
+as it comes. Next, slice 20 (throw out what was said, and hold the
 stream a week), then slice 19 (turns kept without their audio) and slice 12
 (retention), which change the invariants on raw payloads and re-running from
 raw. Slice 12 also waits for Idea Machine's M2, which validates me / not me.

@@ -34,6 +34,7 @@ from hearsay.cache import Cache
 from hearsay.capture import load_captures
 from hearsay.conversations import find_conversations
 from hearsay.imports import load_imports
+from hearsay.media import score_media
 from hearsay.parse import ParseFailed, rebuild
 from hearsay.affect import score_affect
 from hearsay.delivery import measure_delivery
@@ -68,6 +69,7 @@ def run(raw_dir: Path, db_path: Path, audio_dir: Path, labels_dir: Path, model_d
         report(f"Turns from transcripts in {transcripts_dir}:", build_turns(staging, transcripts_dir))
         report("Operator labels and tags, matched to turns:", record_operator_input(staging, labels_dir))
         report("Speaker embeddings and labels:", label_speakers(raw_dir, staging, labels_dir, model_dir, cache))
+        report("Turns that sound like tagged media:", score_media(staging))
         report("The owner's tone of voice:", score_affect(raw_dir, staging, affect_model_dir, cache))
         report("How the owner delivered their turns:", measure_delivery(staging, transcripts_dir))
         record_run(staging)

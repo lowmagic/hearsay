@@ -537,3 +537,35 @@ something from Claude until then.
 Done when: the operator reviews a week of conversations on the page,
 thrown-out stretches never reach Idea Machine, and the rest arrives on
 release or after the week.
+
+## 21. TV and other media, per turn
+
+TV and video dialogue is most of what reaches the stream that isn't anyone
+present: 100 minutes tagged `_media` by 2026-10-29. Until it's tagged it
+reads as other people's speech, and the portal only offered turns Hearsay
+couldn't decide, so TV it had filed as not the owner couldn't be tagged at
+all. Slice 15's media hint, shelved with naming, offered `_media` on
+clusters of people; this one scores single turns (`hearsay/media.py`).
+
+- On every reprocess a logistic regression on speaker embeddings learns
+  from the operator's input: `_media` against someone present (a name the
+  operator gave, `_stranger`, `_me`, the owner by ear).
+- The portal lists turns at the hint or above, unless their own voice or
+  channel said the owner's, above the turns Hearsay couldn't decide, with
+  the same tags. Nothing leaves the stream until the operator tags it.
+
+Done when: new TV is tagged from the list as it comes, and what it offers
+is rarely tagged anything but Media. Then decide whether turns at the hint
+leave the stream untagged.
+
+Measured 2026-10-29, leave one conversation out, per turn: AUC 0.97, and at
+the hint (0.9) 91% of media time against 0.7 of 72 minutes of people
+present. Without the names as people present, 315 untagged turns were
+offered instead of 24, people the operator had named. AudioSet's classes
+(AST) added to the embeddings made it worse. Most media was already tagged:
+24 untagged turns (4 minutes) were offered on the live data.
+
+Music, checked the same day, needs nothing: AST's Singing class reached no
+more than 0.13 on any of 9,837 turns, so songs don't become turns. Music is
+only under speech (34 of 1,072 minutes above 0.5, bars and a dance class),
+and a music filter at that level would have dropped 91 of the owner's turns.

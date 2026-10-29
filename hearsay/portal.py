@@ -10,7 +10,8 @@ sends the token on each request instead: GET /places.json, and POST /places
 with the same fields as the page's forms.
 
 Hearsay says only whether the owner spoke (2026-10-28). The front page plays
-the turns it couldn't decide, and the operator tags each: Me, Someone else,
+the turns it couldn't decide, and those that sound like the media the operator
+has tagged (hearsay/media.py), and the operator tags each: Me, Someone else,
 or not speech (media, music, noise). A tag is written to labels/tags.jsonl,
 the same durable input reprocess reads, with the turn's time span so it
 survives re-transcription, and applies to that turn whatever its voice said
@@ -40,6 +41,7 @@ from urllib.parse import parse_qs, quote, unquote
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from hearsay.media import HINT
 from hearsay.places import (
     LOOKBACK,
     MAX_RADIUS,
@@ -77,6 +79,17 @@ FROM turns t
 JOIN turn_speakers ts ON ts.turn_id = t.turn_id
 JOIN conversation_audio ca ON ca.conversation_id = t.conversation_id
 WHERE ts.label IS NULL AND ca.wav_file IS NOT NULL AND t.end - t.start >= ?
+ORDER BY ca.zero_at DESC, t.start DESC
+"""
+
+# Turns that sound like tagged media, unless their own voice or channel said the owner's.
+MEDIA_SQL = """
+SELECT t.turn_id, t.conversation_id, t.start, t.end, t.text, ca.zero_at
+FROM turn_media tm
+JOIN turns t ON t.turn_id = tm.turn_id
+JOIN turn_speakers ts ON ts.turn_id = t.turn_id
+JOIN conversation_audio ca ON ca.conversation_id = t.conversation_id
+WHERE tm.score >= ? AND ca.wav_file IS NOT NULL AND NOT (ts.label IS 'owner' AND ts.basis IN ('voice', 'channel'))
 ORDER BY ca.zero_at DESC, t.start DESC
 """
 
@@ -232,13 +245,13 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, user: str, pass
             db.close()
         return {t for t, value in found.clips.items() if value.startswith("_")}
 
-    def load_unsure() -> list[dict]:
-        """Turns Hearsay couldn't decide and the operator hasn't tagged, latest first, with
-        when each was said (unix seconds) and the named place it was said at."""
+    def load_turns(sql: str, *params) -> list[dict]:
+        """The query's turns the operator hasn't tagged, latest first, with when each was
+        said (unix seconds) and the named place it was said at."""
         db = connect()
         db.row_factory = sqlite3.Row
         try:
-            rows = [dict(r) for r in db.execute(UNSURE_SQL, (MIN_UNSURE_SECONDS,))]
+            rows = [dict(r) for r in db.execute(sql, params)]
             places = {}
             for conversation_id, place, start, end in db.execute(
                     "SELECT conversation_id, place, start, end FROM conversation_places ORDER BY start"):
@@ -314,9 +327,16 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, user: str, pass
     async def index(request: Request) -> Response:
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
-        unsure = load_unsure()
+        media = load_turns(MEDIA_SQL, HINT)
+        offered = {s["turn_id"] for s in media}
+        unsure = [s for s in load_turns(UNSURE_SQL, MIN_UNSURE_SECONDS) if s["turn_id"] not in offered]
         players = "".join(f"<li>{clip_player(s)}</li>" for s in unsure[:UNSURE])
-        return page("Hearsay", f"""
+        media_players = "".join(f"<li>{clip_player(s)}</li>" for s in media[:UNSURE])
+        media_section = f"""
+<h1>Sounds like TV</h1>
+<p class="muted">{len(media)} turn(s) that sound like what you've tagged Media, latest first.</p>
+<ul>{media_players}</ul>""" if media else ""
+        return page("Hearsay", f"""{media_section}
 <h1>Not sure who spoke</h1>
 <p class="muted">{len(unsure)} turn(s) Hearsay couldn't tell were you or not, latest first.
 Tag each; it applies at the next reprocess. · <a href="/places">Places</a> · <a href="/words">Words</a></p>
