@@ -99,6 +99,11 @@ def test_every_generation_of_labels_lands_on_the_right_turns(tmp_path):
         # Now: absolute times, which outlive any transcript or boundary change.
         + json.dumps({"type": "skip", "at": [wall(zero_at, SHIFT + 20.0, SHIFT + 25.0)]}) + "\n"
     )
+    # Song or talk (hearsay-label music), by absolute time too; the latest answer wins.
+    (labels / "music.jsonl").write_text(
+        json.dumps({"at": [wall(zero_at, SHIFT + 20.0, SHIFT + 25.0)], "turn_ids": ["c1:0003"], "music": "song"}) + "\n"
+        + json.dumps({"at": [wall(zero_at, SHIFT + 20.0, SHIFT + 25.0)], "turn_ids": ["c1:0003"], "music": "talk"}) + "\n"
+    )
     record_operator_input(db_path, labels)
 
     db = sqlite3.connect(db_path)
@@ -109,5 +114,6 @@ def test_every_generation_of_labels_lands_on_the_right_turns(tmp_path):
         ("c1:0001", "name", "Bob"),
         ("c1:0002", "name", "Bob"),
         ("c1:0003", "label", "not_owner"),
+        ("c1:0003", "music", "talk"),
         ("c1:0003", "skip", None),
     ]

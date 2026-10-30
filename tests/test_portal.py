@@ -10,6 +10,7 @@ pytest.importorskip("numpy")
 
 from hearsay.assemble import SCHEMA as ASSEMBLE_SCHEMA  # noqa: E402
 from hearsay.media import SCHEMA as MEDIA_SCHEMA  # noqa: E402
+from hearsay.music import SCHEMA as MUSIC_SCHEMA  # noqa: E402
 from hearsay.parse import SCHEMA as PARSE_SCHEMA  # noqa: E402
 from hearsay.places import SCHEMA as PLACES_SCHEMA, read_places  # noqa: E402
 from hearsay.portal import create_app  # noqa: E402
@@ -31,7 +32,8 @@ def portal(tmp_path):
         w.writeframes(b"".join(sec.to_bytes(2, "little") * 16000 for sec in range(40)))
 
     db = sqlite3.connect(db_path)
-    db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + PLACES_SCHEMA + MEDIA_SCHEMA)
+    db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + PLACES_SCHEMA + MEDIA_SCHEMA
+                    + MUSIC_SCHEMA)
     db.execute("INSERT INTO conversation_audio VALUES ('c1', '2026-01-01T00:00:00+00:00', 40, 1, 'c1.wav', 'sha')")
     for idx in range(8):
         turn_id = f"{'ab'[idx % 2]}{idx}"

@@ -19,8 +19,18 @@ about 1,000 an hour of conversation.
 Every turn of at least MIN_SECONDS with MIN_COVERAGE of real audio is
 scored, the owner's too, so any threshold's cost to real speech can be
 measured. Turns are scored on their first MAX_SECONDS, the model's whole
-input. The scores stay in the database and aren't streamed: nothing acts on
-them until the operator has labeled enough turns to pick a threshold.
+input. The scores stay in the database and aren't streamed.
+
+A turn is a song's words (SONG_SQL) when AST hears it as music and little
+speech, and it lasts long enough to judge: it becomes _music, left out of
+the stream, unless the operator tagged it or answered `hearsay-label music`
+for it, whose answer wins either way (hearsay/turns.py, categories). Music
+alone didn't separate song from talk: below 0.55 the operator's answers were
+mostly talk, people speaking quietly over a band. Speech under SONG_MAX_SPEECH
+took most of that talk out, and SONG_MIN_SECONDS the rest, 0.6-0.8 s turns
+whose padding to MAX_SECONDS keeps their speech score low. Chosen 2026-10-30 on
+114 answered turns (25 song, 89 talk): the rule caught 18 songs and 2 talk.
+On all turns it drops 30, 1.8 minutes, 3 of them the owner's by voice.
 
 The model's license is BSD-3-Clause.
 """
@@ -38,8 +48,17 @@ MUSIC_VERSION = "music-ast-16-16-bf4d03f3"
 MAX_SECONDS = 10.24
 # A word at most: too little sound to tell song from speech.
 MIN_SECONDS = 0.5
+SONG_MIN_MUSIC = 0.3
+SONG_MAX_SPEECH = 0.22
+SONG_MIN_SECONDS = 1.0
 SINGING = ("Singing", "Choir", "Yodeling", "Chant", "Mantra", "Male singing", "Female singing", "Child singing",
            "Synthetic singing", "Rapping")
+
+# Turns that are a song's words by their scores alone.
+SONG_SQL = f"""
+SELECT m.turn_id FROM turn_music m JOIN turns t ON t.turn_id = m.turn_id
+WHERE m.music >= {SONG_MIN_MUSIC} AND m.speech < {SONG_MAX_SPEECH} AND t.end - t.start >= {SONG_MIN_SECONDS}
+"""
 
 SCHEMA = """
 DROP TABLE IF EXISTS turn_music;
