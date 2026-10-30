@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
+from hearsay.music import SONG_SQL
+
 # A pause this long starts a new turn even when the speaker doesn't change.
 MAX_GAP = 2.0
 # Fraction of a turn a labeled span must cover for the turn to inherit it.
@@ -47,8 +49,9 @@ CREATE TABLE turns (
 -- The operator's labels and tags as they apply to the current turns.
 CREATE TABLE operator_input (
     turn_id TEXT NOT NULL,
-    kind TEXT NOT NULL,              -- label | name | clip | mixed | skip
-    value TEXT                       -- owner / not_owner / unsure for label, the name for name and clip
+    kind TEXT NOT NULL,              -- label | name | clip | mixed | skip | music
+    value TEXT                       -- owner / not_owner / unsure for label, the name for name and clip,
+                                     -- song / talk / unsure for music
 );
 """
 
@@ -59,6 +62,7 @@ class OperatorInput(NamedTuple):
     mixed: set[str]
     skipped: set[str]
     clips: dict[str, str]            # turn_id -> name, for a clip tagged on its own
+    music: dict[str, str]            # turn_id -> song | talk | unsure, from `hearsay-label music`
 
 
 def split_turns(segments: list[dict]) -> list[dict]:
@@ -163,7 +167,7 @@ def omi_timeline(db: sqlite3.Connection) -> tuple[dict[str, float], dict[str, tu
     return zeros, segments
 
 
-def resolve(db: sqlite3.Connection, labels_text: str, tags_text: str) -> OperatorInput:
+def resolve(db: sqlite3.Connection, labels_text: str, tags_text: str, music_text: str = "") -> OperatorInput:
     """The operator's labels and tags, matched to the current turns by absolute time."""
     zeros, segments = omi_timeline(db)
     turns = sorted(
@@ -200,11 +204,15 @@ def resolve(db: sqlite3.Connection, labels_text: str, tags_text: str) -> Operato
                     hits.append(turn_id)
         return hits
 
-    result = OperatorInput({}, {}, set(), set(), {})
+    result = OperatorInput({}, {}, set(), set(), {}, {})
     for line in labels_text.splitlines():
         record = json.loads(line)
         for turn_id in covered(record):
             result.labels[turn_id] = record["label"]
+    for line in music_text.splitlines():
+        record = json.loads(line)
+        for turn_id in covered(record):
+            result.music[turn_id] = record["music"]
     for line in tags_text.splitlines():
         record = json.loads(line)
         if record["type"] == "rename":
@@ -240,6 +248,10 @@ def categories(db: sqlite3.Connection) -> dict[str, str]:
     the operator can correct the owner's label either way. One tagged on a
     whole speaker applies to turns labeled not_owner only: it was put on an
     anonymous speaker, which held no owner turns.
+
+    A turn with no category is _music when its scores say it's a song's
+    words (hearsay/music.py), or the operator answered song for it, and not
+    when they answered talk.
     """
     found = {}
     for turn_id, kind, value, label in db.execute(
@@ -250,15 +262,20 @@ def categories(db: sqlite3.Connection) -> dict[str, str]:
     ):
         if kind == "clip" or label == "not_owner":
             found[turn_id] = value
+    answers = dict(db.execute("SELECT turn_id, value FROM operator_input WHERE kind = 'music'"))
+    songs = {row[0] for row in db.execute(SONG_SQL)} | {t for t, answer in answers.items() if answer == "song"}
+    for turn_id in songs:
+        if turn_id not in found and answers.get(turn_id) != "talk":
+            found[turn_id] = "_music"
     return found
 
 
-def read_operator_files(labels_dir: Path) -> tuple[str, str]:
+def read_operator_files(labels_dir: Path) -> tuple[str, str, str]:
     def text(name: str) -> str:
         path = labels_dir / name
         return path.read_text() if path.exists() else ""
 
-    return text("labels.jsonl"), text("tags.jsonl")
+    return text("labels.jsonl"), text("tags.jsonl"), text("music.jsonl")
 
 
 def record_operator_input(db_path: Path, labels_dir: Path) -> dict:
@@ -270,6 +287,7 @@ def record_operator_input(db_path: Path, labels_dir: Path) -> dict:
         rows += [(t, "name", v) for t, v in found.names.items()]
         rows += [(t, "clip", v) for t, v in found.clips.items()]
         rows += [(t, "mixed", None) for t in found.mixed] + [(t, "skip", None) for t in found.skipped]
+        rows += [(t, "music", v) for t, v in found.music.items()]
         db.executemany("INSERT INTO operator_input VALUES (?,?,?)", sorted(rows, key=lambda r: (r[0], r[1])))
         db.commit()
     finally:

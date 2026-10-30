@@ -602,5 +602,12 @@ never forms a conversation (Silero hears no speech in it), and that stays.
   precision on song (dropping real speech is worse than keeping some
   lyrics) are `_music` without a tag. The operator's tags always win.
 
+Applied 2026-10-30, on 114 answers (25 song, 89 talk): music alone was clean
+only at 0.55, which caught 8 songs. Music at least 0.3 with speech under
+0.22 and at least 1 s caught 18 songs and 2 talk; the talk left was 0.6-0.8 s
+turns, whose padding keeps their speech score low. On all turns the rule
+drops 30 (1.8 minutes), 3 the owner's by voice. A song or talk answer wins
+over the rule, so the 2 talk turns stay.
+
 Done when: songs' words rarely reach the stream, and the labeled turns say
 the threshold drops almost no one talking.

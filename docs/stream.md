@@ -107,6 +107,9 @@ categories (`hearsay/turns.py`):
 - `_noise`, `_media`, `_music`: not speech from anyone present. Left out of the stream, and back if the operator
   refiles them. That's Hearsay's call about who is speaking, not a content filter.
 
+Hearsay also files a turn `_music` on its own when its sound says the words are a song's: much music, little speech,
+and at least a second long (`hearsay/music.py`). The operator's category, or their answer of song or talk, wins.
+
 ## Change
 
 Everything can change after the fact: the operator's tags apply to past turns, a growing conversation is

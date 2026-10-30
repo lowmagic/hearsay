@@ -44,7 +44,7 @@ LABELS = "/mnt/fast/hearsay/labels/labels.jsonl"
 ENROLLMENT = "/mnt/fast/hearsay/labels/enrollment.json"
 IMPORTS = "/mnt/fast/hearsay/imports"
 ANSWERS = {"m": "owner", "n": "not_owner", "u": "unsure"}
-# Song or talk, per turn (hearsay/music.py); read only by `music report` so far.
+# Song or talk, per turn; on reprocess the answer wins over hearsay/music.py's rule.
 MUSIC_LABELS = "/mnt/fast/hearsay/labels/music.jsonl"
 MUSIC_ANSWERS = {"g": "song", "t": "talk", "u": "unsure"}
 # Turns the model hears as speech are talk. Below this, music separates a

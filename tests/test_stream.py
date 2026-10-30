@@ -4,6 +4,7 @@ import sqlite3
 from hearsay.affect import SCHEMA as AFFECT_SCHEMA
 from hearsay.assemble import SCHEMA as ASSEMBLE_SCHEMA
 from hearsay.delivery import SCHEMA as DELIVERY_SCHEMA
+from hearsay.music import SCHEMA as MUSIC_SCHEMA
 from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
 from hearsay.parse import SCHEMA as PARSE_SCHEMA
 from hearsay.places import SCHEMA as PLACES_SCHEMA
@@ -32,7 +33,7 @@ def build(tmp_path):
     db_path = tmp_path / "h.sqlite"
     db = sqlite3.connect(db_path)
     db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + CONVERSATIONS_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA
-                    + PLACES_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA)
+                    + PLACES_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA + MUSIC_SCHEMA)
     # The owner's tone of voice, scored on their turn only (hearsay/affect.py).
     db.execute("INSERT INTO turn_affect VALUES ('c1:0000', 0.42, 0.45, 0.6)")
     db.execute("INSERT INTO turn_delivery VALUES ('c1:0000', 4.1, 1, 0.6)")
@@ -83,6 +84,25 @@ def test_stream_attributes_speakers_and_leaves_out_non_speech(tmp_path):
     assert all("delivery" not in u for u in utterances[1:])
     assert [(e["conversation_id"], e["transcribed"], e["open"], e["utterances"]) for e in index] == [
         ("c1", True, False, 8), ("c2", False, True, 0)]
+
+
+def test_a_song_s_words_leave_the_stream_unless_the_operator_says_otherwise(tmp_path):
+    db_path, stream_dir = build(tmp_path), tmp_path / "stream"
+    db = sqlite3.connect(db_path)
+    db.executemany("INSERT INTO turn_music VALUES (?, ?, 0, ?)", [
+        ("c1:0000", 0.25, 0.6),  # talked over loud music: too much speech to be the song
+        ("c1:0002", 0.1, 0.6),   # the song
+        ("c1:0003", 0.1, 0.6),   # scores as the song, but the operator heard talk
+        ("c1:0004", 0.25, 0.1),  # scores as talk, but the operator heard the song
+        ("c1:0005", 0.1, 0.6),   # scores as the song, but tagged someone present
+    ])
+    db.executemany("INSERT INTO operator_input VALUES (?, 'music', ?)", [("c1:0003", "talk"), ("c1:0004", "song")])
+    db.commit()
+    db.close()
+    write_stream(db_path, stream_dir)
+    _, utterances = read(stream_dir)
+    assert [u["text"] for u in utterances] == [
+        "mine", "walter's", "second anon", "a cashier", "too short to tell", "yeah (inherited)"]
 
 
 def test_turns_the_operator_says_are_theirs_are_the_owners(tmp_path):
