@@ -196,9 +196,12 @@ def ranged(data: bytes, range_header: str | None) -> Response:
     return Response(data[start : end + 1], status_code=206, media_type="audio/wav", headers=headers)
 
 
-# One tap each. hearsay/stream.py keeps _me (the owner) and _stranger
-# (someone else present), and leaves the rest out: not speech from anyone there.
-CATEGORIES = {"_me": "Me", "_stranger": "Someone else", "_media": "Media", "_music": "Music", "_noise": "Noise"}
+# One tap each. hearsay/stream.py keeps _me (the owner), _stranger (someone
+# else present) and _mic (someone present, amplified), and leaves the rest out:
+# not speech from anyone there. _mic is kept apart from _stranger because a PA
+# sounds like a speaker, as TV does: hearsay/media.py learns from neither.
+CATEGORIES = {"_me": "Me", "_stranger": "Someone else", "_mic": "On a mic", "_media": "Media", "_music": "Music",
+              "_noise": "Noise"}
 
 
 def clip_player(s: dict) -> str:
