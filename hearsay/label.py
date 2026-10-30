@@ -17,6 +17,7 @@ rewritten only to add a window.
     python -m hearsay.label check              # label turns labeled by diarization, blind
     python -m hearsay.label report             # precision/recall
     python -m hearsay.label music              # label quiet turns song / talk
+    python -m hearsay.label music --dropped    # the same, only turns the music rule drops
     python -m hearsay.label music report       # what each music cutoff would drop
 
 START and END are ISO-8601 times, e.g. 2026-09-27T10:05 or "2026-09-27 10:05";
@@ -34,6 +35,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from hearsay.music import SONG_MAX_SPEECH, SONG_MIN_MUSIC, SONG_MIN_SECONDS
 from hearsay.speakers import DIARIZATION_AGREEMENT, NOT_OWNER_THRESHOLD, OWNER_THRESHOLD
 from hearsay.turns import wall
 
@@ -76,7 +78,7 @@ FROM turn_speakers ts JOIN turns t ON t.turn_id = ts.turn_id GROUP BY 1
 
 # Turns that might be a song's words, with the voice label that says what dropping them costs.
 MUSIC_SQL = f"""
-SELECT t.turn_id, t.conversation_id, t.start, t.end, t.text, m.music, ts.label, ca.wav_file, ca.zero_at
+SELECT t.turn_id, t.conversation_id, t.start, t.end, t.text, m.music, m.speech, ts.label, ca.wav_file, ca.zero_at
 FROM turn_music m
 JOIN turns t ON t.turn_id = m.turn_id
 JOIN conversation_audio ca ON ca.conversation_id = t.conversation_id
@@ -246,10 +248,20 @@ def music_answers() -> dict[str, str]:
     return found
 
 
-def music_loop() -> None:
-    """Play quiet turns spread across the music score and ask whether the words are a song's."""
+def dropped(turn: dict) -> bool:
+    """Whether hearsay/music.py's rule files the turn as music, without an answer."""
+    return (turn["music"] >= SONG_MIN_MUSIC and turn["speech"] < SONG_MAX_SPEECH
+            and turn["end"] - turn["start"] >= SONG_MIN_SECONDS)
+
+
+def music_loop(only_dropped: bool = False) -> None:
+    """Play quiet turns spread across the music score and ask whether the words are a song's.
+
+    only_dropped: just the turns the rule leaves out of the stream, to check it
+    by ear; a talk answer puts one back on the next reprocess.
+    """
     answered = music_answers()
-    pool = [t for t in query(MUSIC_SQL) if t["turn_id"] not in answered]
+    pool = [t for t in query(MUSIC_SQL) if t["turn_id"] not in answered and (dropped(t) or not only_dropped)]
     print(f"{len(answered)} answered, {len(pool)} to go. Are the words a song's, or someone talking?")
     print("g = song, t = talk, u = unsure, s = skip, r = replay, q = quit")
     while pool:
@@ -263,7 +275,7 @@ def music_loop() -> None:
                       "music": answer, "labeled_at": datetime.now(timezone.utc).isoformat()}
             ssh(["sh", "-c", f"'cat >> {MUSIC_LABELS}'"], (json.dumps(record) + "\n").encode())
         pool.remove(turn)
-    print("\nRun `music report` to see the cutoffs; no reprocess needed.")
+    print("\nAnswers apply on the next reprocess; `music report` shows the cutoffs now.")
 
 
 def music_table(pool: list[dict], answers: dict[str, str]) -> list[str]:
@@ -402,6 +414,8 @@ def main() -> None:
         check_loop()
     elif sys.argv[1:] == ["music"]:
         music_loop()
+    elif sys.argv[1:] == ["music", "--dropped"]:
+        music_loop(only_dropped=True)
     elif sys.argv[1:] == ["music", "report"]:
         music_report()
     elif not sys.argv[1:]:
