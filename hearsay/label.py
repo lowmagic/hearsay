@@ -16,6 +16,8 @@ rewritten only to add a window.
     python -m hearsay.label review             # re-hear labels the model disagrees with
     python -m hearsay.label check              # label turns labeled by diarization, blind
     python -m hearsay.label report             # precision/recall
+    python -m hearsay.label music              # label quiet turns song / talk
+    python -m hearsay.label music report       # what each music cutoff would drop
 
 START and END are ISO-8601 times, e.g. 2026-09-27T10:05 or "2026-09-27 10:05";
 without a UTC offset they are this machine's local time. For an import, START
@@ -42,6 +44,12 @@ LABELS = "/mnt/fast/hearsay/labels/labels.jsonl"
 ENROLLMENT = "/mnt/fast/hearsay/labels/enrollment.json"
 IMPORTS = "/mnt/fast/hearsay/imports"
 ANSWERS = {"m": "owner", "n": "not_owner", "u": "unsure"}
+# Song or talk, per turn (hearsay/music.py); read only by `music report` so far.
+MUSIC_LABELS = "/mnt/fast/hearsay/labels/music.jsonl"
+MUSIC_ANSWERS = {"g": "song", "t": "talk", "u": "unsure"}
+# Turns the model hears as speech are talk. Below this, music separates a
+# song's words (high) from quiet real talk (low); singing doesn't (2026-10-30).
+MUSIC_MAX_SPEECH = 0.3
 
 CANDIDATES_SQL = """
 SELECT t.turn_id, t.conversation_id, t.start, t.end, t.text, ts.owner_similarity, ca.wav_file, ca.zero_at
@@ -64,6 +72,16 @@ WHERE ts.basis = 'diarization'
 COVERAGE_SQL = """
 SELECT coalesce(ts.basis, 'unlabeled') AS basis, sum(t.end - t.start) AS seconds
 FROM turn_speakers ts JOIN turns t ON t.turn_id = ts.turn_id GROUP BY 1
+"""
+
+# Turns that might be a song's words, with the voice label that says what dropping them costs.
+MUSIC_SQL = f"""
+SELECT t.turn_id, t.conversation_id, t.start, t.end, t.text, m.music, ts.label, ca.wav_file, ca.zero_at
+FROM turn_music m
+JOIN turns t ON t.turn_id = m.turn_id
+JOIN conversation_audio ca ON ca.conversation_id = t.conversation_id
+LEFT JOIN turn_speakers ts ON ts.turn_id = t.turn_id
+WHERE m.speech < {MUSIC_MAX_SPEECH}
 """
 
 # The operator's labels as reprocess matched them to turns.
@@ -114,19 +132,19 @@ def play(turn: dict) -> None:
         subprocess.run([player, f.name], check=True)
 
 
-def pick(unlabeled: list[dict]) -> dict:
-    # Spread picks across the similarity range, so both ends and the
+def pick(unlabeled: list[dict], score: str = "owner_similarity") -> dict:
+    # Spread picks across the score's range, so both ends and the
     # ambiguous middle get labels. Before enrollment there are no scores.
-    scored = [s for s in unlabeled if s["owner_similarity"] is not None]
+    scored = [s for s in unlabeled if s[score] is not None]
     if not scored:
         return random.choice(unlabeled)
-    low = min(s["owner_similarity"] for s in scored)
-    high = max(s["owner_similarity"] for s in scored)
+    low = min(s[score] for s in scored)
+    high = max(s[score] for s in scored)
     target = random.uniform(low, high)
-    return min(scored, key=lambda s: abs(s["owner_similarity"] - target))
+    return min(scored, key=lambda s: abs(s[score] - target))
 
 
-def ask(turn: dict) -> str | None:
+def ask(turn: dict, answers: dict[str, str] = ANSWERS) -> str | None:
     """Play a turn and return the operator's label, or None to stop."""
     # The transcript shows which words the turn covers; it says nothing of
     # whose voice the model heard, so labeling stays blind.
@@ -134,13 +152,13 @@ def ask(turn: dict) -> str | None:
     print(f"\n{turn['end'] - turn['start']:.1f} s{text}")
     play(turn)
     answer = ""
-    while answer not in ANSWERS and answer != "s":
+    while answer not in answers and answer != "s":
         answer = input("> ").strip().lower()
         if answer == "q":
             return None
         if answer == "r":
             play(turn)
-    return "skip" if answer == "s" else ANSWERS[answer]
+    return "skip" if answer == "s" else answers[answer]
 
 
 def save_label(turn: dict, label: str) -> None:
@@ -215,6 +233,63 @@ def check_loop() -> None:
         if answer != "skip":
             save_label(turn, answer)
     print("\nReprocess on the NAS, then run `report`.")
+
+
+def music_answers() -> dict[str, str]:
+    """turn_id -> song | talk | unsure, the latest answer for a turn winning."""
+    text = ssh(["sh", "-c", f"'[ ! -e {MUSIC_LABELS} ] || cat {MUSIC_LABELS}'"]).decode()
+    found = {}
+    for line in text.splitlines():
+        record = json.loads(line)
+        for turn_id in record["turn_ids"]:
+            found[turn_id] = record["music"]
+    return found
+
+
+def music_loop() -> None:
+    """Play quiet turns spread across the music score and ask whether the words are a song's."""
+    answered = music_answers()
+    pool = [t for t in query(MUSIC_SQL) if t["turn_id"] not in answered]
+    print(f"{len(answered)} answered, {len(pool)} to go. Are the words a song's, or someone talking?")
+    print("g = song, t = talk, u = unsure, s = skip, r = replay, q = quit")
+    while pool:
+        turn = pick(pool, "music")
+        answer = ask(turn, MUSIC_ANSWERS)
+        if answer is None:
+            break
+        if answer != "skip":
+            # Absolute times like the other labels, so a later step can match them to new turns.
+            record = {"at": [wall(turn["zero_at"], turn["start"], turn["end"])], "turn_ids": [turn["turn_id"]],
+                      "music": answer, "labeled_at": datetime.now(timezone.utc).isoformat()}
+            ssh(["sh", "-c", f"'cat >> {MUSIC_LABELS}'"], (json.dumps(record) + "\n").encode())
+        pool.remove(turn)
+    print("\nRun `music report` to see the cutoffs; no reprocess needed.")
+
+
+def music_table(pool: list[dict], answers: dict[str, str]) -> list[str]:
+    """Per music cutoff: what the pool loses above it, and how the answers above and below it split."""
+    songs = sum(1 for t in pool if answers.get(t["turn_id"]) == "song")
+    lines = [f"{len(pool)} turns with speech < {MUSIC_MAX_SPEECH}, "
+             f"{songs} answered song, {sum(1 for a in answers.values() if a == 'talk')} talk",
+             "music >=  turns  minutes  owner   song  talk  precision  recall   talk minutes"]
+    for i in range(1, 20):
+        cutoff = i / 20
+        above = [t for t in pool if t["music"] >= cutoff]
+        heard = [(answers.get(t["turn_id"]), t["end"] - t["start"]) for t in above]
+        song = sum(1 for a, _ in heard if a == "song")
+        talk = [seconds for a, seconds in heard if a == "talk"]
+        precision = f"{song / (song + len(talk)):.2f}" if song + len(talk) else "  - "
+        recall = f"{song / songs:.2f}" if songs else "  - "
+        lines.append(f"{cutoff:8.2f}  {len(above):5d}  {sum(t['end'] - t['start'] for t in above) / 60:7.1f}  "
+                     f"{sum(1 for t in above if t['label'] == 'owner'):5d}  {song:5d}  {len(talk):4d}  "
+                     f"{precision:>9}  {recall:>6}  {sum(talk) / 60:13.2f}")
+    return lines
+
+
+def music_report() -> None:
+    print("\n".join(music_table(query(MUSIC_SQL), music_answers())))
+    print("\nowner: turns above the cutoff whose voice label is the owner's, answered or not.")
+    print("Answers were drawn spread across the music score, so precision is per answer, not per turn.")
 
 
 def enroll(start: str, end: str) -> None:
@@ -325,6 +400,10 @@ def main() -> None:
         review_loop()
     elif sys.argv[1:] == ["check"]:
         check_loop()
+    elif sys.argv[1:] == ["music"]:
+        music_loop()
+    elif sys.argv[1:] == ["music", "report"]:
+        music_report()
     elif not sys.argv[1:]:
         label_loop()
     else:
