@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
+from hearsay.media import MEDIA_SQL
 from hearsay.music import SONG_SQL
 
 # A pause this long starts a new turn even when the speaker doesn't change.
@@ -251,7 +252,8 @@ def categories(db: sqlite3.Connection) -> dict[str, str]:
 
     A turn with no category is _music when its scores say it's a song's
     words (hearsay/music.py), or the operator answered song for it, and not
-    when they answered talk.
+    when they answered talk. Otherwise it's _media when it sounds like the
+    media the operator has tagged (hearsay/media.py).
     """
     found = {}
     for turn_id, kind, value, label in db.execute(
@@ -267,6 +269,8 @@ def categories(db: sqlite3.Connection) -> dict[str, str]:
     for turn_id in songs:
         if turn_id not in found and answers.get(turn_id) != "talk":
             found[turn_id] = "_music"
+    for (turn_id,) in db.execute(MEDIA_SQL):
+        found.setdefault(turn_id, "_media")
     return found
 
 

@@ -4,6 +4,7 @@ import sqlite3
 from hearsay.affect import SCHEMA as AFFECT_SCHEMA
 from hearsay.assemble import SCHEMA as ASSEMBLE_SCHEMA
 from hearsay.delivery import SCHEMA as DELIVERY_SCHEMA
+from hearsay.media import SCHEMA as MEDIA_SCHEMA
 from hearsay.music import SCHEMA as MUSIC_SCHEMA
 from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
 from hearsay.parse import SCHEMA as PARSE_SCHEMA
@@ -33,7 +34,7 @@ def build(tmp_path):
     db_path = tmp_path / "h.sqlite"
     db = sqlite3.connect(db_path)
     db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + CONVERSATIONS_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA
-                    + PLACES_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA + MUSIC_SCHEMA)
+                    + PLACES_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA + MUSIC_SCHEMA + MEDIA_SCHEMA)
     # The owner's tone of voice, scored on their turn only (hearsay/affect.py).
     db.execute("INSERT INTO turn_affect VALUES ('c1:0000', 0.42, 0.45, 0.6)")
     db.execute("INSERT INTO turn_delivery VALUES ('c1:0000', 4.1, 1, 0.6)")
@@ -103,6 +104,23 @@ def test_a_song_s_words_leave_the_stream_unless_the_operator_says_otherwise(tmp_
     _, utterances = read(stream_dir)
     assert [u["text"] for u in utterances] == [
         "mine", "walter's", "second anon", "a cashier", "too short to tell", "yeah (inherited)"]
+
+
+def test_turns_that_sound_like_tagged_media_leave_the_stream_unless_tagged(tmp_path):
+    db_path, stream_dir = build(tmp_path), tmp_path / "stream"
+    db = sqlite3.connect(db_path)
+    db.executemany("INSERT INTO turn_media VALUES (?, ?)", [
+        ("c1:0000", 0.95),  # the owner's by voice: never media
+        ("c1:0001", 0.95),  # the TV
+        ("c1:0002", 0.85),  # below the hint
+        ("c1:0005", 0.95),  # sounds like the TV, but tagged someone present
+    ])
+    db.commit()
+    db.close()
+    write_stream(db_path, stream_dir)
+    _, utterances = read(stream_dir)
+    assert [u["text"] for u in utterances] == [
+        "mine", "first anon", "second anon", "first anon again", "a cashier", "too short to tell", "yeah (inherited)"]
 
 
 def test_turns_the_operator_says_are_theirs_are_the_owners(tmp_path):

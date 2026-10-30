@@ -5,10 +5,17 @@ a TV through its speaker sounds unlike people in the room. On every reprocess
 a logistic regression learns that from the operator's own input: turns tagged
 _media against turns of someone present (a name the operator gave, _stranger,
 _me, or the owner by ear). A name still means someone was there, though it no
-longer decides who spoke. Each embedded turn gets a score, and the portal
-offers the turns at HINT or more that weren't the owner's by voice or channel,
-to tag. It never tags anything itself: a wrong hint costs a tap, a wrong tag
-would drop real speech from the stream.
+longer decides who spoke. _mic counts as neither: someone on a microphone is
+between the two (an MC, a stand-up set). Each embedded turn gets a score, and
+the turns at HINT or more that weren't the owner's by voice or channel
+(MEDIA_SQL) are _media unless the operator tagged them (hearsay/turns.py,
+categories). The portal keeps offering them, so a wrong one is a tap to put
+back.
+
+Left out without a tag since 2026-10-30: of the turns at HINT the operator
+had tagged, 240 were _media, 4 _music and none someone present. After the
+operator tagged the 18 then untagged, the clip tags at HINT were still only
+_media (48) and _music (4).
 
 Measured 2026-10-29, leave one conversation out, per turn: AUC 0.97; at HINT,
 195 of 245 media turns (91% of media time) against 4 of 398 turns of people
@@ -25,6 +32,12 @@ from pathlib import Path
 
 # Score a turn needs for the hint.
 HINT = 0.9
+
+# Turns at the hint, unless their own voice or channel said the owner's.
+MEDIA_SQL = f"""
+SELECT tm.turn_id FROM turn_media tm JOIN turn_speakers ts ON ts.turn_id = tm.turn_id
+WHERE tm.score >= {HINT} AND NOT (ts.label IS 'owner' AND ts.basis IN ('voice', 'channel'))
+"""
 # Tagged turns of each kind needed before there's anything to learn from.
 MIN_TRAINING = 20
 

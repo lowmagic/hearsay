@@ -109,6 +109,8 @@ categories (`hearsay/turns.py`):
 
 Hearsay also files a turn `_music` on its own when its sound says the words are a song's: much music, little speech,
 and at least a second long (`hearsay/music.py`). The operator's category, or their answer of song or talk, wins.
+Likewise `_media` for a turn that sounds like the media the operator has tagged, unless its own voice or channel said
+the owner's (`hearsay/media.py`); the operator's category wins.
 
 ## Change
 

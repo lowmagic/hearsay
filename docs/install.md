@@ -226,7 +226,8 @@ which shows the same portal and logs in with the app's capture token. Tag
 each turn Me, Someone else, Media, Music or Noise: Me reaches the stream as
 yours, Someone else as a stranger, and the rest (TV or video talk, songs,
 noise) is left out. A tag applies to that turn whatever its voice said. The more TV you tag
-Media, the better the TV list gets; it never leaves anything out itself.
+Media, the better the TV list gets. Turns on the TV list leave the stream as Media even untagged; tag one
+Someone else, Me or On a mic to put it back.
 
 The portal's Places page lists spots where the phone recorded and no named
 place is near (how long, which days, a map link); name them there. Only these
