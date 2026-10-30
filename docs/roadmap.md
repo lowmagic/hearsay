@@ -589,14 +589,15 @@ never forms a conversation (Silero hears no speech in it), and that stays.
 - Score: every turn on reprocess, by AST's AudioSet classes for speech,
   singing (Rapping among them) and music, cached by audio like affect
   (`hearsay/music.py`). In the database only, not the stream.
-- Label: `hearsay-label music` plays turns spread across the scores and
-  asks whether the words are the song or someone talking, drawn from the
-  music nights (folk and jazz under talk: c20000101T000001Z,
-  c20000101T000002Z, c20000101T000003Z, c20000101T000005Z,
-  c20000101T000006Z, c20000101T000007Z, c20000101T000009Z,
-  c20000101T000010Z, c20000101T000011Z, c20000101T000013Z) and the turns
-  tagged `_music`. Older `_media` tags mix music and TV, so they aren't
-  music labels. The report gives precision and recall per threshold.
+- Label: `hearsay-label music` plays turns the model hears as little speech
+  (under 0.3), spread across the music score, and asks whether the words are
+  the song or someone talking; the answers are in labels/music.jsonl.
+  `hearsay-label music report` gives, per music cutoff, what it would drop
+  (turns, minutes, the owner's turns) and how the answers above it split.
+  Changed 2026-10-30 from drawing on the music nights and `_music` tags: the
+  operator's listening found low speech with high music is lyrics, and low
+  speech with low music is quiet real talk, while singing didn't rank them.
+  388 turns (15 minutes) score under 0.3 speech; none score 0.5 singing.
 - Apply: once about 100 are labeled, turns above a threshold chosen for
   precision on song (dropping real speech is worse than keeping some
   lyrics) are `_music` without a tag. The operator's tags always win.
