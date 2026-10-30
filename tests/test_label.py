@@ -1,7 +1,7 @@
 import sqlite3
 
 from hearsay.assemble import SCHEMA as AUDIO_SCHEMA
-from hearsay.label import MUSIC_SQL, music_table
+from hearsay.label import MUSIC_SQL, dropped, music_table
 from hearsay.music import SCHEMA as MUSIC_SCHEMA
 from hearsay.speakers import SCHEMA as SPEAKERS_SCHEMA
 from hearsay.turns import SCHEMA as TURNS_SCHEMA
@@ -30,3 +30,11 @@ def test_music_table_counts_what_each_cutoff_drops():
     assert rows["0.50"] == ["0.50", "2", "1.5", "1", "1", "1", "0.50", "1.00", "0.50"]
     assert rows["0.55"] == ["0.55", "1", "1.0", "0", "1", "0", "1.00", "1.00", "0.00"]
     assert rows["0.85"] == ["0.85", "0", "0.0", "0", "0", "0", "-", "0.00", "0.00"]
+
+
+def test_dropped_follows_the_music_rule():
+    song = {"music": 0.5, "speech": 0.1, "start": 0, "end": 2}
+    assert dropped(song)
+    assert not dropped({**song, "speech": 0.25})  # too much speech
+    assert not dropped({**song, "end": 0.6})      # too short to judge
+    assert not dropped({**song, "music": 0.2})

@@ -249,7 +249,8 @@ the stream picks the tag up on the next reprocess. To measure how well your
 voice is recognized, label turns blind with `hearsay-label` and read
 `hearsay-label report`.
 To pick where songs' words leave the stream, answer song or talk with
-`hearsay-label music` and read `hearsay-label music report`.
+`hearsay-label music` and read `hearsay-label music report`. `hearsay-label music --dropped`
+plays only the turns the rule is leaving out, to check it by ear.
 
 To run the test suite against the real captures (slow: it repeats a whole
 reprocess without the cache):
