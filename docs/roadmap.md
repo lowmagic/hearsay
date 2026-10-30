@@ -565,6 +565,13 @@ offered instead of 24, people the operator had named. AudioSet's classes
 (AST) added to the embeddings made it worse. Most media was already tagged:
 24 untagged turns (4 minutes) were offered on the live data.
 
+Done 2026-10-30: of the turns at the hint the operator had tagged, 240 were
+Media, 4 Music, and none someone present; 18 (4.3 minutes) waited untagged,
+and once tagged the hint's clip tags were still only Media and Music. Turns
+at the hint now leave the stream as `_media` without a tag, and the portal
+keeps offering them so a wrong one can be put back. `_mic` trains neither
+side: someone on a microphone is between present and media.
+
 Music, checked the same day, needs nothing: AST's Singing class reached no
 more than 0.13 on any of 9,837 turns, so songs don't become turns. Music is
 only under speech (34 of 1,072 minutes above 0.5, bars and a yoga class),
