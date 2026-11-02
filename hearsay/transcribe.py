@@ -19,7 +19,8 @@ interjections Whisper caught (3 of 6 where one side was empty).
 A transcript records the sha256 of the WAV it was made from and the settings
 used, including the words Parakeet was nudged toward (hearsay/words.py).
 Reprocess only uses it for that exact WAV. When either changes, the
-conversation is transcribed again on the next run.
+conversation is transcribed again on the next run, unless it's sealed
+(hearsay/records.py): its record keeps the transcript it was sealed with.
 
 A conversation that fails gets a marker in failed/ instead, for the same WAV
 and settings, and is skipped until either changes. One bad WAV failing every
@@ -101,14 +102,19 @@ def current_settings() -> dict:
     # Missing means no words yet. Any other failure stops: read as none, it would
     # change the settings and re-transcribe everything.
     committed = ssh(["sh", "-c", f"'[ ! -e {WORDS} ] || cat {WORDS}'"])
-    words = boosted(json.loads(committed)) if committed.strip() else []
+    return settings_for(boosted(json.loads(committed)) if committed.strip() else [])
+
+
+def settings_for(words: list[str]) -> dict:
+    """The settings a transcript is made with, given the words it leans toward.
+    Sealing (hearsay/records.py) waits for a transcript made with these."""
     return SETTINGS | ({"boost_words": words, "boost_alpha": BOOST_ALPHA} if words else {})
 
 
 def pending(settings: dict) -> list[dict]:
     """Conversations without a transcript or failure marker for their current WAV and settings, oldest first."""
     sql = ("SELECT conversation_id, wav_file, wav_sha256, duration FROM conversation_audio"
-           " WHERE wav_file IS NOT NULL AND wav_sha256 IS NOT NULL ORDER BY conversation_id")
+           " WHERE wav_file IS NOT NULL AND wav_sha256 IS NOT NULL AND NOT sealed ORDER BY conversation_id")
     rows = json.loads(ssh(["sqlite3", "-json", DB, f'"{sql}"']) or b"[]")
     done, failed = json.loads(ssh(["python3", "-", TRANSCRIPTS_DIR, FAILED_DIR], EXISTING_SCRIPT.encode()))
     return [r for r in rows

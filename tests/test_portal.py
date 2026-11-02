@@ -42,13 +42,13 @@ def portal(tmp_path, monkeypatch):
     db = sqlite3.connect(db_path)
     db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + PLACES_SCHEMA + MEDIA_SCHEMA
                     + MUSIC_SCHEMA + FORGET_SCHEMA + HOLD_SCHEMA)
-    db.execute("INSERT INTO conversation_audio VALUES ('c1', '2026-01-01T00:00:00+00:00', 40, 1, 'c1.wav', 'sha')")
+    db.execute("INSERT INTO conversation_audio VALUES ('c1', '2026-01-01T00:00:00+00:00', 40, 1, 'c1.wav', 'sha', 0)")
     for idx in range(8):
         turn_id = f"{'ab'[idx % 2]}{idx}"
         db.execute("INSERT INTO turns VALUES (?,?,?,?,?,?,?,?)",
                    (turn_id, "c1", idx, 5.0 * idx, 5.0 * idx + 4, "synthetic", None, None))
         label = (None, "not_owner")[idx % 2]
-        db.execute("INSERT INTO turn_speakers VALUES (?,?,?,?,?,?,?)",
+        db.execute("INSERT INTO turn_speakers VALUES (?,?,?,?,?,?,?, NULL, NULL)",
                    (turn_id, "c1", 1.0, None, 0.2 if label is None else 0.05, label, "voice" if label else None))
     db.commit()
     db.close()
@@ -183,9 +183,9 @@ def test_conversations_narrow_to_a_place_and_to_words_said_and_read_in_order(por
     db.execute("INSERT INTO conversations VALUES ('c1', 1767225600, 1767225640, 32, 0)")
     # A day later, at no named place, and with no audio kept.
     db.execute("INSERT INTO conversations VALUES ('c2', 1767312000, 1767312010, 2, 1)")
-    db.execute("INSERT INTO conversation_audio VALUES ('c2', '2026-01-02T00:00:00+00:00', 10, 1, NULL, NULL)")
+    db.execute("INSERT INTO conversation_audio VALUES ('c2', '2026-01-02T00:00:00+00:00', 10, 1, NULL, NULL, 0)")
     db.execute("INSERT INTO turns VALUES ('c2:0', 'c2', 0, 1, 3, 'Pass the bread', NULL, NULL)")
-    db.execute("INSERT INTO turn_speakers VALUES ('c2:0', 'c2', 1.0, NULL, 0.9, 'owner', 'voice')")
+    db.execute("INSERT INTO turn_speakers VALUES ('c2:0', 'c2', 1.0, NULL, 0.9, 'owner', 'voice', NULL, NULL)")
     db.execute("UPDATE turns SET text = 'Pass the <salt>' WHERE turn_id = 'a2'")
     db.execute("UPDATE turns SET diar_speaker = 'SPEAKER_07' WHERE turn_id IN ('b1', 'b5')")
     db.execute("INSERT INTO turn_media VALUES ('b3', 0.95)")
@@ -291,7 +291,7 @@ def test_a_day_reads_its_conversations_through_in_order_by_the_host_s_clock(port
     db.execute("INSERT INTO conversations VALUES ('c2', 1767232800, 1767232810, 2, 0)")
     db.execute("INSERT INTO conversations VALUES ('c3', 1767247200, 1767247210, 2, 0)")
     for c in ("c2", "c3"):
-        db.execute("INSERT INTO conversation_audio VALUES (?, '2026-01-01T00:00:00+00:00', 10, 1, NULL, NULL)", (c,))
+        db.execute("INSERT INTO conversation_audio VALUES (?, '2026-01-01T00:00:00+00:00', 10, 1, NULL, NULL, 0)", (c,))
     db.commit()
     db.close()
 
@@ -407,7 +407,7 @@ def test_a_conversation_is_held_until_released_from_its_page_once_it_has_ended(p
     db.executescript(CONVERSATIONS_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA)
     db.execute("INSERT INTO conversations VALUES ('c1', ?, ?, 32, 0)", (now - 3600.4, now - 3000.7))
     db.execute("INSERT INTO conversations VALUES ('c2', ?, ?, 5, 1)", (now - 100.3, now - 10.2))  # still going
-    db.execute("INSERT INTO conversation_audio VALUES ('c2', '2026-01-02T00:00:00+00:00', 10, 1, NULL, NULL)")
+    db.execute("INSERT INTO conversation_audio VALUES ('c2', '2026-01-02T00:00:00+00:00', 10, 1, NULL, NULL, 0)")
     db.commit()
     db.close()
 

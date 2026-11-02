@@ -2,7 +2,9 @@
 recorder's uploads (hearsay/capture.py).
 
 Every run is a full rebuild: raw is the only source of truth, and the database
-is a disposable view of it. Nothing here writes to raw.
+is a disposable view of it. Nothing here writes to raw. An upload sealed
+behind the line (hearsay/records.py) is loaded from the rows it made when it
+was parsed, so its file, audio, isn't opened again.
 
 Only facts stated by the payloads are stored. Live transcript fragments are not
 merged, and nothing is assigned to a conversation by inference: live transcript
@@ -13,6 +15,7 @@ import hashlib
 import json
 import os
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 from hearsay import capture
@@ -28,7 +31,10 @@ CREATE TABLE payloads (
     body_sha256 TEXT NOT NULL,
     -- An Omi retry: same idempotency key and body as this earlier payload.
     -- Duplicates are recorded but not parsed.
-    duplicate_of TEXT REFERENCES payloads(path)
+    duplicate_of TEXT REFERENCES payloads(path),
+    first_at REAL,                   -- unix seconds its audio spans (captures: its records), NULL if none
+    last_at REAL,
+    sealed INTEGER NOT NULL          -- 1 if loaded from its record (hearsay/records.py)
 );
 
 -- Segments exactly as each payload carried them. Transcript payloads carry
@@ -197,8 +203,19 @@ def parse_capture(db: sqlite3.Connection, path: str, body: bytes) -> None:
     db.executemany("INSERT INTO locations VALUES (?,?,?,?,?)", [(path, *fix) for fix in capture.locations(records)])
 
 
-def load_payloads(db: sqlite3.Connection, raw_dir: Path) -> tuple[dict, list[str]]:
-    counts = {"transcript": 0, "audio": 0, "memory": 0, "capture": 0, "duplicate": 0}
+def span(webhook_type: str, received_at: str, body: bytes) -> tuple[float | None, float | None]:
+    """The unix seconds a payload's audio spans, for sealing (hearsay/records.py)."""
+    if webhook_type == "capture":
+        times = [at for at, _, _ in capture.read_records(body)]
+        return (min(times), max(times)) if times else (None, None)
+    if webhook_type == "audio":
+        at = datetime.fromisoformat(received_at).timestamp()
+        return at, at
+    return None, None
+
+
+def load_payloads(db: sqlite3.Connection, raw_dir: Path, sealed: dict[str, dict] | None = None) -> tuple[dict, list[str]]:
+    counts = {"transcript": 0, "audio": 0, "memory": 0, "capture": 0, "duplicate": 0, "sealed": 0}
     errors = []
     sidecars = []
     for sidecar_path in raw_dir.glob("*/*/*.json"):
@@ -210,6 +227,17 @@ def load_payloads(db: sqlite3.Connection, raw_dir: Path) -> tuple[dict, list[str
     for sc, sidecar_path in sidecars:
         body_path = sidecar_path.parent / sc["body_file"]
         path = str(body_path.relative_to(raw_dir))
+        if sealed and path in sealed:
+            rows = sealed[path]
+            for table, table_rows in rows.items():
+                for row in table_rows:
+                    row = row[:-1] + [1] if table == "payloads" else row
+                    db.execute(f"INSERT INTO {table} VALUES ({','.join('?' * len(row))})", row)
+            [payload] = rows["payloads"]
+            if payload[4] and not payload[7]:  # its idempotency key, and it's no duplicate
+                first_delivery[(payload[1], payload[4], payload[6])] = path
+            counts["sealed"] += 1
+            continue
         try:
             body = body_path.read_bytes()
             sha = hashlib.sha256(body).hexdigest()
@@ -221,8 +249,9 @@ def load_payloads(db: sqlite3.Connection, raw_dir: Path) -> tuple[dict, list[str
 
             duplicate_of = first_delivery.get((webhook_type, key, sha)) if key else None
             db.execute(
-                "INSERT INTO payloads VALUES (?,?,?,?,?,?,?,?)",
-                (path, webhook_type, sc["received_at"], query.get("uid"), key, len(body), sha, duplicate_of),
+                "INSERT INTO payloads VALUES (?,?,?,?,?,?,?,?,?,?,0)",
+                (path, webhook_type, sc["received_at"], query.get("uid"), key, len(body), sha, duplicate_of,
+                 *span(webhook_type, sc["received_at"], body)),
             )
             if duplicate_of:
                 counts["duplicate"] += 1
@@ -246,8 +275,9 @@ def load_payloads(db: sqlite3.Connection, raw_dir: Path) -> tuple[dict, list[str
     return counts, errors
 
 
-def rebuild(raw_dir: Path, db_path: Path) -> dict:
-    """Rebuild db_path from raw_dir. Replaces db_path only if every payload parses."""
+def rebuild(raw_dir: Path, db_path: Path, sealed: dict[str, dict] | None = None) -> dict:
+    """Rebuild db_path from raw_dir, and sealed uploads from their rows.
+    Replaces db_path only if every payload parses."""
     # The receiver writes the body first, then the sidecar. A body without a
     # sidecar is an incomplete write (or one still in flight) and is skipped.
     incomplete = sum(1 for b in raw_dir.glob("*/*/*.body") if not b.with_suffix(".json").exists())
@@ -257,7 +287,7 @@ def rebuild(raw_dir: Path, db_path: Path) -> dict:
     db = sqlite3.connect(tmp_path)
     try:
         db.executescript(SCHEMA)
-        counts, errors = load_payloads(db, raw_dir)
+        counts, errors = load_payloads(db, raw_dir, sealed)
         db.commit()
     finally:
         db.close()

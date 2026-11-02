@@ -9,7 +9,7 @@ source "$(dirname "$0")/lib.sh"
 
 require_root
 COMPOSE=(docker compose -f "$REPO_DIR/install/compose.yaml")
-CHILDREN=(config raw db audio labels transcripts imports stream)
+CHILDREN=(config raw db audio labels transcripts imports stream records)
 
 say "Checking Docker"
 if ! docker info >/dev/null 2>&1; then
@@ -51,6 +51,10 @@ chown root:root "$NAS_CONFIG"
 chmod 700 "$NAS_CONFIG"
 chown "$APPS_UID:$APPS_GID" "$NAS_RAW"
 chmod 750 "$NAS_RAW"
+# What sealed conversations' audio produced (hearsay/records.py): raw's
+# stand-in once their audio is gone, so guarded like it.
+chown "$APPS_UID:$APPS_GID" "$NAS_RECORDS"
+chmod 750 "$NAS_RECORDS"
 # Parsed transcripts, assembled audio and the utterance stream: same
 # sensitivity as raw. The apps group (consumers included) can read them.
 for dir in "$NAS_DB" "$NAS_AUDIO" "$NAS_STREAM"; do

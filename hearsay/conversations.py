@@ -8,6 +8,10 @@ within TAP_WINDOW of it (a self-note, marked on purpose). Content is
 never consulted, so conversations can run for hours; splitting by topic is a
 downstream concern. Dropped speech stays in raw and returns if the rules change.
 
+Conversations behind the seal line (hearsay/records.py) come from their
+records as they were sealed; voice detection runs only on the audio still
+read, and speech that starts before the line is left to them.
+
 Measured on 8.7 h of real audio (2026-09-28): Omi's conversations held 99%
 of detected speech, and a 3 min gap never split one of them (1-2 min did),
 though it merges Omi's back-to-back conversations into one.
@@ -78,6 +82,8 @@ def group_speech(speech: list[tuple[float, float]], taps: list[float] = (),
 def detect_speech(raw_dir: Path, bursts: list, cache: Cache | None = None) -> list[tuple[float, float]]:
     """Speech intervals in wall-clock seconds. With a cache, a run of audio seen
     before (same bytes) is not analyzed again; only new audio costs time."""
+    if not bursts:
+        return []
     # Imported here: torch is heavy, and only the worker image has it.
     import numpy as np
     import torch
@@ -124,17 +130,21 @@ def find_conversations(raw_dir: Path, db_path: Path, cache: Cache | None = None)
     db = sqlite3.connect(db_path)
     try:
         bursts = place_bursts(db)
-        speech = detect_speech(raw_dir, bursts, cache)
+        [(line,)] = db.execute("SELECT line FROM seal").fetchall()
+        sealed = db.execute(
+            "SELECT conversation_id, start, end, speech_seconds FROM sealed_conversations ORDER BY start").fetchall()
+        speech = [(s, e) for s, e in detect_speech(raw_dir, bursts, cache) if s >= line]
         taps = [at for (at,) in db.execute("SELECT at FROM marks WHERE kind = 'start'")]
         ends = [at for (at,) in db.execute("SELECT at FROM marks WHERE kind = 'end'")]
         stream_end = max((end for _, end, _ in bursts), default=0.0)
         groups = group_speech(speech, taps, ends)
-        rows = [
+        rows = [(cid, start, end, seconds, 0) for cid, start, end, seconds in sealed] + [
             (conversation_id(start), start - PAD, end + PAD, seconds, int(stream_end - end < GAP))
             for start, end, seconds in groups
         ]
-        tap_rows = [(conversation_id(start), t) for start, end, _ in groups for t in sorted(taps)
-                    if near(t, start, end)]
+        # A conversation's speech, without its padding, for its taps.
+        tap_rows = [(cid, t) for cid, start, end, _, _ in rows for t in sorted(taps)
+                    if near(t, start + PAD, end - PAD)]
         db.executescript(SCHEMA)
         db.executemany("INSERT INTO conversations VALUES (?,?,?,?,?)", rows)
         db.executemany("INSERT INTO conversation_taps VALUES (?,?)", tap_rows)
@@ -144,6 +154,7 @@ def find_conversations(raw_dir: Path, db_path: Path, cache: Cache | None = None)
     return {
         "speech_minutes": round(sum(e - s for s, e in speech) / 60, 1),
         "conversations": len(rows),
+        "sealed": len(sealed),
         "open": sum(r[4] for r in rows),
         "with_taps": len({r[0] for r in tap_rows}),
         "audio_hours": round(sum(end - start for start, end, _ in bursts) / 3600, 1),

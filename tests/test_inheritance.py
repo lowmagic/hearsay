@@ -33,7 +33,7 @@ def test_unlabeled_turns_take_their_diarized_speakers_label_only_when_it_agrees(
         embedding = array("f", voice).tobytes() if label else None
         if not label:
             short[turn_id] = voice
-        db.execute("INSERT INTO turn_speakers VALUES (?,?,1,?,NULL,?,?)",
+        db.execute("INSERT INTO turn_speakers VALUES (?,?,1,?,NULL,?,?, NULL, NULL)",
                    (turn_id, conversation, embedding, label, "voice" if label else None))
 
     assert inherit_labels(db, ME, short) == {"inherited_owner": 1, "inherited_not_owner": 1,

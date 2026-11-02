@@ -23,10 +23,10 @@ def setup(tmp_path, wav_sha256="sha-now"):
     labels.mkdir()
     db = sqlite3.connect(db_path)
     db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA)
-    db.execute("INSERT INTO conversation_audio VALUES ('c1', ?, 40, 1, 'c1.wav', ?)",
+    db.execute("INSERT INTO conversation_audio VALUES ('c1', ?, 40, 1, 'c1.wav', ?, 0)",
                ((T - timedelta(seconds=SHIFT)).isoformat(), wav_sha256))
     # Omi's memory for its conversation omi1: no live transcript, so its time 0 is started_at = T.
-    db.execute("INSERT INTO payloads VALUES ('memory/m.body', 'memory', ?, 'u', NULL, 1, 'x', NULL)", (T.isoformat(),))
+    db.execute("INSERT INTO payloads VALUES ('memory/m.body', 'memory', ?, 'u', NULL, 1, 'x', NULL, NULL, NULL, 0)", (T.isoformat(),))
     db.execute("INSERT INTO memories (payload_path, conversation_id, started_at) VALUES ('memory/m.body', 'omi1', ?)",
                (T.isoformat(),))
     # Omi's segments cut the same speech differently from our turns.

@@ -79,7 +79,8 @@ from; the channels themselves are kept to tell, per turn, whether the owner
 
 Reprocess decodes each run of frames once, to PCM16 mono at 16 kHz, cached by
 the run's content, and records it in captured_audio and mac_audio for
-place_bursts.
+place_bursts. Uploads sealed behind the line (hearsay/records.py) aren't
+read: their conversations come from records.
 """
 
 import bisect
@@ -490,7 +491,7 @@ def load_captures(raw_dir: Path, db_path: Path, cache_dir: Path) -> dict:
     db = sqlite3.connect(db_path)
     try:
         paths = [p for (p,) in db.execute(
-            "SELECT path FROM payloads WHERE type = 'capture' AND duplicate_of IS NULL")]
+            "SELECT path FROM payloads WHERE type = 'capture' AND duplicate_of IS NULL AND NOT sealed")]
         # Records within an upload are in the order they arrived. Uploads can
         # reach the NAS out of order after a retry, so they're put back in
         # order by their first record.

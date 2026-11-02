@@ -44,12 +44,12 @@ def build(tmp_path):
     db.execute("INSERT INTO turn_stutters VALUES ('c1:0000', 2.0, 'repeat', 4.8, 1)")
     db.execute("INSERT INTO conversations VALUES ('c1', ?, ?, 60, 0)", (T, T + 100))
     db.execute("INSERT INTO conversations VALUES ('c2', ?, ?, 40, 1)", (T + 500, T + 560))  # not transcribed yet
-    db.execute("INSERT INTO conversation_audio VALUES ('c1', '2026-09-21T14:13:20+00:00', 100, 1, 'c1.wav', 'sha')")
+    db.execute("INSERT INTO conversation_audio VALUES ('c1', '2026-09-21T14:13:20+00:00', 100, 1, 'c1.wav', 'sha', 0)")
     for idx, (text, voice, label, similarity, name) in enumerate(TURNS):
         turn_id = f"c1:{idx:04d}"
         db.execute("INSERT INTO turns VALUES (?, 'c1', ?, ?, ?, ?, ?, 0.8)", (turn_id, idx, 10.0 * idx, 10.0 * idx + 5, text, voice))
         basis = "diarization" if "inherited" in text else "voice" if label else None
-        db.execute("INSERT INTO turn_speakers VALUES (?, 'c1', 1, NULL, ?, ?, ?)", (turn_id, similarity, label, basis))
+        db.execute("INSERT INTO turn_speakers VALUES (?, 'c1', 1, NULL, ?, ?, ?, NULL, NULL)", (turn_id, similarity, label, basis))
         if name:
             db.execute("INSERT INTO operator_input VALUES (?, 'name', ?)", (turn_id, name))
     db.commit()

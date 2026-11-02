@@ -136,6 +136,31 @@ see a half-built database and a run with nothing new writes almost nothing
 (`fast` is snapshotted nightly). Slow steps are cached by audio content in
 `db/cache.sqlite`.
 
+A conversation is sealed a week after it ends, once it's transcribed and
+every one before it is sealed ([`hearsay/records.py`](../hearsay/records.py)):
+what its audio gave (boundaries, transcript, voice embeddings, music and tone
+scores) is kept in `/mnt/fast/hearsay/records/`, and from then on reprocess
+takes it from there and never reads that audio again. So a run with nothing
+new reads only the last week's audio. Who spoke, your tags and throw-outs,
+places and the stream still re-run over everything. A sealed conversation
+keeps the transcript and models it was sealed with: a Words update or a new
+model reaches it only if you unseal it, while its audio is still kept. This
+moves the seal line back to before a date, and the next reprocess redoes
+everything after it from raw:
+
+```sh
+sudo docker compose -f /mnt/fast/repos/hearsay/install/compose.yaml run --rm reprocess python -m hearsay.records unseal 2026-10-01
+```
+
+An import, or pendant audio downloaded late, that lands behind the line
+unseals back to it by itself. To check that a build from the records equals
+a build from raw (slow: it builds the database twice, once reading all the
+audio):
+
+```sh
+sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay/install/compose.yaml run --rm reprocess python -m hearsay.records check
+```
+
 To run the whole pipeline now, enqueue it on the NAS:
 
 ```sh
@@ -261,7 +286,9 @@ you approved in Lattice, which Idea Machine writes to
 `/mnt/fast/ideamachine/vocab/vocab.json`. The portal only reads it. `nas.sh`
 never creates that folder, since Idea Machine's dataset mounts there: if
 it's missing, the portal starts without it and `nas.sh` says so. Each Update re-transcribes
-every conversation on the dev box's next run, so batch your edits.
+the conversations not yet sealed (about the last week) on the dev box's next
+run, so batch your edits; to redo older ones too, unseal them (Reprocessing,
+above).
 
 Tags are stored by the time of the turn you heard, in
 `/mnt/fast/hearsay/labels/`, so they survive re-transcription and apply to

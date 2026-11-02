@@ -27,7 +27,7 @@ def build(tmp_path, tagged):
         for i in range(tagged + 10):
             turn_id = f"{kind}{i}"
             vector = unit([c + rng.gauss(0, 0.06) for c in centre])
-            db.execute("INSERT INTO turn_speakers VALUES (?, 'c1', 1, ?, 0, 'not_owner', 'voice')",
+            db.execute("INSERT INTO turn_speakers VALUES (?, 'c1', 1, ?, 0, 'not_owner', 'voice', NULL, NULL)",
                        (turn_id, array("f", vector).tobytes()))
             if i < tagged:
                 db.execute("INSERT INTO operator_input VALUES (?, 'name', ?)", (turn_id, "_media" if kind == "tv" else f"Person {i % 4}"))
