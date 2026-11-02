@@ -149,17 +149,28 @@ transcribed again, with new `transcript_revision`s and renumbered ids throughout
 
 ## Forgetting
 
-`forgotten.json` is a list, one entry per thing the operator asked Hearsay to forget:
-`{forgotten_at, start, end, conversation_id, utterance_ids, reason}`, with ids as they were. It is append-only, never
-rewritten or shrunk. It is the only deletion signal: anything else that leaves the stream was restructured, not
-deleted. Match by time, `start` to `end`: the ids are renumbered across transcript revisions.
+`forgotten.json` is a list, one entry per stretch the operator threw out:
+`{forgotten_at, start, end, conversation_id, utterance_ids, reason}`. `forgotten_at` is when they threw it out;
+`utterance_ids` are the utterances it removed from the transcript of the time, which a consumer may never have seen
+(the conversation may not have been in the stream yet); `reason` is the operator's few words, or `null`. It is
+append-only, never rewritten or shrunk. It is the only deletion signal: anything else that leaves the stream was
+restructured, not deleted. Match by time, `start` to `end`: the ids are renumbered across transcript revisions.
 
-Forgetting is the operator's input, applied on every reprocess, so a re-run from raw never brings forgotten speech back
-into the stream. Raw payloads and audio of a forgotten stretch are kept until retention (roadmap slice 12) deletes
-them. Until the operator can forget (slice 20), the list is empty.
+Everything in a listed stretch stays out of the stream for good: every utterance that overlaps it at all, the taps
+inside it, and a conversation that lies wholly inside it, whose index entry goes too. A conversation only partly
+thrown out keeps its index entry, with its places. Delete what you hold from a stretch; don't wait for its
+conversation's revision to change.
 
-Slice 20 also holds each conversation back for two weeks, or until the operator releases it: until then it isn't in the
-index at all. That's additive, so `format_version` stays 1.
+Throwing out is the operator's input, applied on every reprocess, so a re-run from raw never brings it back into the
+stream. Raw payloads and audio of a thrown-out stretch are kept until retention (roadmap slice 12) deletes them.
+
+## The hold
+
+A conversation enters the stream two weeks after it ends, or sooner when the operator releases it (only one that has
+ended can be): until then it isn't in the index at all, nor its file, taps or places. That's additive, so
+`format_version` stays 1, but captures, self-notes too, arrive up to two weeks late. Once in, a conversation stays: the
+stream never withdraws a conversation it has published, so whatever was in it before the hold began stays too. Only
+`forgotten.json` takes anything out.
 
 ## Guarantees
 

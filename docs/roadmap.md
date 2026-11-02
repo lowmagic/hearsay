@@ -541,7 +541,16 @@ something from Claude until then.
 
 The conversation page and its list come first, read-only (`/conversations`
 in the portal): reading and hearing new capture on them is also how slice
-22's done-when is checked. Throwing out, then the hold, follow.
+22's done-when is checked. Throwing out came next (`hearsay/forget.py`):
+a stretch from the first turn checked to the last, or the whole
+conversation, leaves on the next reprocess; every turn it overlaps at all
+goes, since keeping words thrown out is worse than losing a neighbour's.
+The hold came last (`hearsay/hold.py`): the stream never withdraws a
+conversation it has published, since Idea Machine retires speech that
+leaves the index, so what it had before the hold stayed. Only a
+conversation that has ended can be released, or what's said next would go
+unread. The portal reads the stream's index to say whether Idea Machine
+can see each conversation.
 
 Done when: the operator reviews two weeks of conversations on the page,
 thrown-out stretches never reach Idea Machine, and the rest arrives on

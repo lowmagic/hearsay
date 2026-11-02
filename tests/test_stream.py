@@ -4,6 +4,8 @@ import sqlite3
 from hearsay.affect import SCHEMA as AFFECT_SCHEMA
 from hearsay.assemble import SCHEMA as ASSEMBLE_SCHEMA
 from hearsay.delivery import SCHEMA as DELIVERY_SCHEMA
+from hearsay.forget import SCHEMA as FORGET_SCHEMA
+from hearsay.hold import HOLD, SCHEMA as HOLD_SCHEMA
 from hearsay.media import SCHEMA as MEDIA_SCHEMA
 from hearsay.music import SCHEMA as MUSIC_SCHEMA
 from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
@@ -34,7 +36,8 @@ def build(tmp_path):
     db_path = tmp_path / "h.sqlite"
     db = sqlite3.connect(db_path)
     db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + CONVERSATIONS_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA
-                    + PLACES_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA + MUSIC_SCHEMA + MEDIA_SCHEMA)
+                    + PLACES_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA + MUSIC_SCHEMA + MEDIA_SCHEMA + FORGET_SCHEMA
+                    + HOLD_SCHEMA)
     # The owner's tone of voice, scored on their turn only (hearsay/affect.py).
     db.execute("INSERT INTO turn_affect VALUES ('c1:0000', 0.42, 0.45, 0.6)")
     db.execute("INSERT INTO turn_delivery VALUES ('c1:0000', 4.1, 1, 0.6)")
@@ -62,7 +65,7 @@ def read(stream_dir):
 
 def test_stream_attributes_speakers_and_leaves_out_non_speech(tmp_path):
     db_path, stream_dir = build(tmp_path), tmp_path / "stream"
-    assert write_stream(db_path, stream_dir) == {"conversations": 2, "transcribed": 1, "utterances": 8}
+    assert write_stream(db_path, stream_dir) == {"conversations": 2, "transcribed": 1, "utterances": 8, "held": 0}
     index, utterances = read(stream_dir)
 
     assert [(u["text"], u["speaker"]["kind"], u["speaker"]["name"], u["speaker"]["label"]) for u in utterances] == [
@@ -198,6 +201,34 @@ def test_revisions_change_only_when_a_conversation_does(tmp_path):
     assert list((stream_dir / "conversations").iterdir()) == []
 
 
+def test_a_conversation_is_held_two_weeks_unless_released_and_once_published_stays(tmp_path):
+    db_path, stream_dir = build(tmp_path), tmp_path / "stream"
+
+    def published(now: float) -> list[str]:
+        write_stream(db_path, stream_dir, now=now)
+        return [e["conversation_id"] for e in json.loads((stream_dir / "index.json").read_text())["conversations"]]
+
+    def release(start: float, end: float | None = None) -> None:
+        db = sqlite3.connect(db_path)
+        db.execute("DELETE FROM releases")
+        if end is not None:
+            db.execute("INSERT INTO releases VALUES (?, ?)", (start, end))
+        db.commit()
+        db.close()
+
+    # c1 ends at T + 100, c2 at T + 560.
+    assert write_stream(db_path, stream_dir, now=T + 3600)["held"] == 2
+    assert published(T + 3600) == [] and not (stream_dir / "conversations/c1.jsonl").exists()
+    release(T + 1, T + 100)  # doesn't cover all of c1
+    assert published(T + 3600) == []
+    release(T, T + 100)
+    assert published(T + 3600) == ["c1"] and (stream_dir / "conversations/c1.jsonl").exists()
+    release(T)  # taken out of the labels: c1 is already published, so it stays
+    assert published(T + 3600) == ["c1"]
+    assert published(T + 560 + HOLD - 1) == ["c1"]
+    assert published(T + 560 + HOLD) == ["c1", "c2"]
+
+
 def test_forgotten_list_exists_and_is_never_rewritten(tmp_path):
     db_path, stream_dir = build(tmp_path), tmp_path / "stream"
     write_stream(db_path, stream_dir)
@@ -213,4 +244,4 @@ def test_forgotten_list_exists_and_is_never_rewritten(tmp_path):
     db.commit()
     db.close()
     write_stream(db_path, stream_dir)
-    assert json.loads((stream_dir / "forgotten.json").read_text()) == [entry]
+    assert (stream_dir / "forgotten.json").read_text() == json.dumps([entry])  # not even reformatted

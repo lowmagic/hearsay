@@ -20,16 +20,26 @@ Files are written atomically and the index last, so a reader never sees a
 half-written file, and a file is only rewritten when its content changes.
 
 forgotten.json is the consumers' only deletion signal, so it is append-only:
-nothing here ever rewrites or shrinks it.
+nothing here ever rewrites or shrinks it. Each stretch the operator threw
+out (hearsay/forget.py) is appended the first time a stream is written with
+it, with the ids it removed. Whatever falls in a listed stretch stays out
+of the stream for good, even if the mark is later taken back: its
+utterances, its taps, and a conversation that lies wholly inside it.
+
+A conversation enters the stream when its hold ends (hearsay/hold.py), and
+once in, it stays: one that left would look to a consumer like speech that
+vanished, so the index this replaces says what's already published.
 """
 
 import hashlib
 import json
 import os
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from hearsay.hold import held
 from hearsay.turns import categories
 
 # Bump on any change to the index or utterance format that would break a consumer.
@@ -160,6 +170,14 @@ def transcript_revisions(db: sqlite3.Connection) -> dict[str, str]:
     return {c: hashlib.sha256(json.dumps(r).encode()).hexdigest()[:16] for c, r in rows.items()}
 
 
+def within(spans: list[tuple[float, float]], start: float, end: float) -> bool:
+    return any(s <= start and end <= e for s, e in spans)
+
+
+def overlaps(spans: list[tuple[float, float]], start: float, end: float) -> bool:
+    return any(s < end and start < e for s, e in spans)
+
+
 def write_if_changed(path: Path, data: bytes) -> None:
     if path.exists() and path.read_bytes() == data:
         return
@@ -168,7 +186,13 @@ def write_if_changed(path: Path, data: bytes) -> None:
     os.replace(tmp, path)
 
 
-def write_stream(db_path: Path, stream_dir: Path) -> dict:
+def published(stream_dir: Path) -> set[str]:
+    """The conversations in the stream as last written."""
+    index = stream_dir / "index.json"
+    return {e["conversation_id"] for e in json.loads(index.read_text())["conversations"]} if index.exists() else set()
+
+
+def write_stream(db_path: Path, stream_dir: Path, now: float | None = None) -> dict:
     db = sqlite3.connect(db_path)
     try:
         found = utterances(db)
@@ -176,22 +200,49 @@ def write_stream(db_path: Path, stream_dir: Path) -> dict:
         conversations = db.execute("SELECT conversation_id, start, end, open FROM conversations ORDER BY start").fetchall()
         taps = {}
         for conversation_id, at in db.execute("SELECT conversation_id, at FROM conversation_taps ORDER BY at"):
-            taps.setdefault(conversation_id, []).append(iso(at))
+            taps.setdefault(conversation_id, []).append(at)
         places = {}
         for conversation_id, place, start, end in db.execute(
             "SELECT conversation_id, place, start, end FROM conversation_places ORDER BY start"
         ):
             places.setdefault(conversation_id, []).append({"name": place, "start": iso(start), "end": iso(end)})
+        thrown_out = db.execute(
+            "SELECT start, end, marked_at, reason, conversation_id, turn_ids FROM forgotten ORDER BY start").fetchall()
+        releases = db.execute("SELECT start, end FROM releases").fetchall()
     finally:
         db.close()
 
+    stream_dir.mkdir(parents=True, exist_ok=True)
+    forgotten_path = stream_dir / "forgotten.json"
+    forgotten = json.loads(forgotten_path.read_text()) if forgotten_path.exists() else []
+    listed, known = {(f["start"], f["end"]) for f in forgotten}, len(forgotten)
+    for start, end, marked_at, reason, conversation_id, turn_ids in thrown_out:
+        if (iso(start), iso(end)) not in listed:
+            forgotten.append({"forgotten_at": marked_at, "start": iso(start), "end": iso(end),
+                              "conversation_id": conversation_id, "utterance_ids": json.loads(turn_ids),
+                              "reason": reason})
+            listed.add((iso(start), iso(end)))
+    if len(forgotten) > known or not forgotten_path.exists():
+        write_if_changed(forgotten_path, json.dumps(forgotten, indent=2, ensure_ascii=False).encode() + b"\n")
+    gone = [(datetime.fromisoformat(s).timestamp(), datetime.fromisoformat(e).timestamp()) for s, e in listed]
+    for conversation_id in found:
+        found[conversation_id] = [u for u in found[conversation_id] if not overlaps(
+            gone, datetime.fromisoformat(u["start"]).timestamp(), datetime.fromisoformat(u["end"]).timestamp())]
+
     conversation_dir = stream_dir / "conversations"
     conversation_dir.mkdir(parents=True, exist_ok=True)
-    index = []
+    already = published(stream_dir)
+    now = time.time() if now is None else now
+    index, holding = [], 0
     for conversation_id, start, end, is_open in conversations:
+        if within(gone, start, end):
+            continue
+        if conversation_id not in already and held(start, end, releases, now):
+            holding += 1
+            continue
         entry = {"conversation_id": conversation_id, "start": iso(start), "end": iso(end),
                  "open": bool(is_open), "transcribed": conversation_id in found,
-                 "taps": taps.get(conversation_id, []), "places": places.get(conversation_id, []),
+                 "taps": [iso(at) for at in taps.get(conversation_id, []) if not within(gone, at, at)], "places": places.get(conversation_id, []),
                  "utterances": 0, "revision": None, "transcript_revision": None, "file": None}
         if conversation_id in found:
             data = "".join(json.dumps(u, ensure_ascii=False) + "\n" for u in found[conversation_id]).encode()
@@ -200,9 +251,6 @@ def write_stream(db_path: Path, stream_dir: Path) -> dict:
             entry.update(utterances=len(found[conversation_id]), revision=hashlib.sha256(data).hexdigest()[:16],
                          transcript_revision=transcripts[conversation_id], file=name)
         index.append(entry)
-    forgotten = stream_dir / "forgotten.json"
-    if not forgotten.exists():
-        write_if_changed(forgotten, b"[]\n")
     write_if_changed(stream_dir / "index.json",
                      json.dumps({"format_version": FORMAT_VERSION, "conversations": index}, indent=2).encode())
 
@@ -211,4 +259,4 @@ def write_stream(db_path: Path, stream_dir: Path) -> dict:
         if f"conversations/{path.name}" not in current:
             path.unlink()
     return {"conversations": len(index), "transcribed": len(current),
-            "utterances": sum(e["utterances"] for e in index)}
+            "utterances": sum(e["utterances"] for e in index), "held": holding}

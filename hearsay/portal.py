@@ -11,20 +11,28 @@ with the same fields as the page's forms.
 
 Hearsay says only whether the owner spoke (2026-10-28). The front page plays
 the turns it couldn't decide, and those that sound like the media the operator
-has tagged (hearsay/media.py), and the operator tags each: Me, Someone else,
-or not speech (media, music, noise). Tagging a turn collapses it to an
-Undo button rather than reloading the page; undoing appends a record that
-takes the tag back. A tag is written to labels/tags.jsonl, the same durable
+has tagged (hearsay/media.py), and the operator tags each: Me, Other or Mic
+(someone present), or not speech (Media, Music, Noise), or deletes it. Tagging
+a turn collapses it to an Undo button rather than reloading the page; undoing
+appends a record that takes the tag back. A tag is written to labels/tags.jsonl, the same durable
 input reprocess reads, with the turn's time span so it
 survives re-transcription, and applies to that turn whatever its voice said
-(hearsay.turns.categories).
+(hearsay.turns.categories). Delete throws the turn out, as a conversation's
+page does (below): Noise keeps its words in Hearsay, Delete doesn't.
 
 The Conversations page lists every conversation, newest first, narrowed to
 a named place or to those whose words contain a search, and opens each as
 its transcript in order: every turn with when, where and who the stream
 says said it (or why it's left out), and the conversation's audio, which
-plays from any turn on. It reads what the last reprocess wrote; the
+plays from any turn on. Each says whether it's in the stream yet, read from
+the stream's index, or held, and until when (hearsay/hold.py); the operator
+can release an ended one early (labels/release.jsonl). It reads what the last reprocess wrote; the
 transcript is the first part of roadmap slice 20.
+
+On a conversation's page the operator throws out a stretch, from the first
+turn checked to the last, or the whole conversation, with an optional reason
+that Idea Machine will see. The mark is written to labels/forget.jsonl
+(hearsay/forget.py) and can be taken back until a reprocess applies it.
 
 The Words page edits the words transcription is nudged toward
 (hearsay/words.py): a draft kept until the operator presses Update, which
@@ -38,6 +46,7 @@ import hmac
 import html
 import io
 import json
+import math
 import os
 import re
 import sqlite3
@@ -50,6 +59,8 @@ from urllib.parse import parse_qs, quote, unquote
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
+from hearsay.forget import read_marks
+from hearsay.hold import HOLD, held, read_releases
 from hearsay.media import HINT
 from hearsay.places import (
     LOOKBACK,
@@ -62,7 +73,7 @@ from hearsay.places import (
     unnamed_spots,
     visits,
 )
-from hearsay.stream import letters, speaker_kind
+from hearsay.stream import letters, published, speaker_kind
 from hearsay.turns import categories, read_operator_files, resolve, wall
 from hearsay.words import boosted, commit, read_committed, read_draft, read_lattice, save_draft, tidy
 
@@ -84,6 +95,8 @@ OPENING_CHARACTERS = 200
 CLIP_CHARACTERS = 280
 # Turns shown under a conversation in the list when a search matches them.
 MATCHES_SHOWN = 3
+# Why a stretch was thrown out: a few words, which reach Idea Machine.
+REASON_CHARACTERS = 200
 
 UNSURE_SQL = """
 SELECT t.turn_id, t.conversation_id, t.start, t.end, t.text, ca.zero_at
@@ -126,6 +139,7 @@ button { font: inherit; width: 100%; padding: 0.8rem; margin-top: 0.6rem; }
 .row { display: flex; gap: 0.5rem; }
 .row button { flex: 1; }
 .clip .row button { font-size: 0.85em; }
+.clip button.delete { color: #c33; }
 .hinted { font-weight: 600; outline: 2px solid var(--accent); }
 textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 0.6rem; min-height: 12rem; }
 .added { color: #2a8a3a; }
@@ -143,7 +157,13 @@ textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 0.6rem; 
 .turn.left { color: var(--muted); }
 .turn.now, .turn:target { background: color-mix(in srgb, var(--accent) 15%, transparent); }
 .place { font-weight: 600; border-bottom: none; padding-top: 1rem; }
+.turn input[type=checkbox] { width: auto; margin: 0 0.5rem 0 0; transform: scale(1.3); }
+.place button { width: auto; margin: 0 0 0 0.5rem; padding: 0.2rem 0.8rem; font-size: 0.85em; }
+.forget { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); padding: 0.5rem 0; }
+.forget input { padding: 0.4rem; }
+.forget .row button { font-size: 0.85em; padding: 0.5rem; }
 mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; }
+.release button { margin-top: 0; }
 """
 
 # Tags a clip without leaving the page, and collapses it to an Undo button that
@@ -160,14 +180,15 @@ document.addEventListener('submit', async event => {
   if (!form.matches('form.clip') || !event.submitter) return;
   event.preventDefault();
   const item = form.closest('li'), turn_id = form.elements.turn_id.value, saved = [...item.childNodes];
-  if (!await post('/turn', {turn_id, category: event.submitter.value})) return;
+  const path = event.submitter.getAttribute('formaction') || '/turn';
+  if (!await post(path, {turn_id, category: event.submitter.value})) return;
   const row = document.createElement('div'), said = document.createElement('span'), undo = document.createElement('button');
   row.className = 'tagged';
   said.className = 'muted';
-  said.textContent = 'Tagged ' + event.submitter.textContent;
+  said.textContent = path === '/turn' ? 'Tagged ' + event.submitter.textContent : 'Deleted at the next reprocess';
   undo.type = 'button';
   undo.textContent = 'Undo';
-  undo.onclick = async () => { if (await post('/turn/undo', {turn_id})) item.replaceChildren(...saved); };
+  undo.onclick = async () => { if (await post(path + '/undo', {turn_id})) item.replaceChildren(...saved); };
   row.append(said, undo);
   item.replaceChildren(row);
 });
@@ -181,14 +202,19 @@ const player = document.getElementById('player');
 const turns = [...document.querySelectorAll('li[data-start]')];
 document.addEventListener('click', event => {
   const link = event.target.closest('a.at');
-  if (!link) return;
+  if (!link || !player) return;
   event.preventDefault();
   const seconds = parseFloat(link.closest('li').dataset.start);
   if (player.readyState) player.currentTime = seconds;
   else player.addEventListener('loadedmetadata', () => { player.currentTime = seconds; }, {once: true});
   player.play();
 });
-player.addEventListener('timeupdate', () => {
+document.addEventListener('submit', event => {
+  const ask = {whole: 'Throw out this whole conversation?',
+               release: 'Release this conversation? Idea Machine gets it at the next reprocess.'}[event.submitter?.value];
+  if (ask && !confirm(ask)) event.preventDefault();
+});
+player?.addEventListener('timeupdate', () => {
   let now = null;
   for (const turn of turns) { if (parseFloat(turn.dataset.start) <= player.currentTime) now = turn; else break; }
   turns.forEach(turn => turn.classList.toggle('now', turn === now));
@@ -243,8 +269,9 @@ def ranged(data: bytes, range_header: str | None) -> Response:
 # else present) and _mic (someone present, amplified), and leaves the rest out:
 # not speech from anyone there. _mic is kept apart from _stranger because a PA
 # sounds like a speaker, as TV does: hearsay/media.py learns from neither.
-CATEGORIES = {"_me": "Me", "_stranger": "Someone else", "_mic": "On a mic", "_media": "Media", "_music": "Music",
-              "_noise": "Noise"}
+CATEGORIES = {"_me": "Me", "_stranger": "Other", "_mic": "Mic", "_media": "Media", "_music": "Music", "_noise": "Noise"}
+# A row of people present, then one of what isn't speech, which ends with Delete.
+CATEGORY_ROWS = (("_me", "_stranger", "_mic"), ("_media", "_music", "_noise"))
 
 
 def clip_player(s: dict) -> str:
@@ -252,14 +279,15 @@ def clip_player(s: dict) -> str:
     words = s["text"] if len(s["text"]) <= CLIP_CHARACTERS else s["text"][:CLIP_CHARACTERS].rsplit(" ", 1)[0] + " …"
     said = [f"{s['end'] - s['start']:.1f} s", f"{datetime.fromtimestamp(s['at'], timezone.utc):%b %-d %H:%M} UTC"]
     said += [s["place"]] if s["place"] else []
-    buttons = "".join(f"<button type='submit' name='category' value='{value}'>{label}</button>"
-                      for value, label in CATEGORIES.items())
+    people, other = ("".join(f"<button type='submit' name='category' value='{value}'>{CATEGORIES[value]}</button>"
+                             for value in row) for row in CATEGORY_ROWS)
+    other += "<button type='submit' class='delete' formaction='/turn/delete'>Delete</button>"
     return (f"<audio controls preload='none' src='/audio/{quote(s['turn_id'])}'></audio>"
             f"<div class='words'>{html.escape(words)}</div>"
             f"<div class='muted'>{html.escape(' · '.join(said))}</div>"
             f"<form class='clip' method='post' action='/turn'>"
             f"<input type='hidden' name='turn_id' value='{html.escape(s['turn_id'])}'>"
-            f"<div class='row'>{buttons}</div></form>")
+            f"<div class='row'>{people}</div><div class='row'>{other}</div></form>")
 
 
 def marked(text: str, query: str) -> str:
@@ -277,6 +305,12 @@ def conversation_places(db: sqlite3.Connection) -> dict[str, list[tuple[str, flo
             "SELECT conversation_id, place, start, end FROM conversation_places ORDER BY start"):
         places.setdefault(conversation_id, []).append((place, start, end))
     return places
+
+
+def whole_seconds(start: float, end: float) -> list[str]:
+    """A conversation's span widened to whole seconds, so that a record of it,
+    read back from text, still covers the conversation as stored."""
+    return [datetime.fromtimestamp(t, timezone.utc).isoformat() for t in (math.floor(start), math.ceil(end))]
 
 
 def place_at(places: list[tuple[str, float, float]], at: float) -> str | None:
@@ -329,8 +363,8 @@ def heard_at_spot(spot_times: list[float], times: list[float], turns: list[tuple
     return (picked + [t for t in found if t not in picked])[:PLACE_CLIPS]
 
 
-def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, user: str, password: str, session_key: str,
-               app_token: str = "", vocab_path: Path | None = None) -> FastAPI:
+def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Path, user: str, password: str,
+               session_key: str, app_token: str = "", vocab_path: Path | None = None) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     tags_path = labels_dir / "tags.jsonl"
 
@@ -369,12 +403,22 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, user: str, pass
             places = conversation_places(db)
         finally:
             db.close()
-        done = tagged()
+        done, marks = tagged(), read_marks(labels_dir)
         rows = [row for row in rows if row["turn_id"] not in done]
         for row in rows:
             row["at"] = datetime.fromisoformat(row["zero_at"]).timestamp() + row["start"]
             row["place"] = place_at(places.get(row["conversation_id"], []), row["at"])
-        return rows
+        return [row for row in rows if not any(
+            m["start"] < row["at"] + row["end"] - row["start"] and row["at"] < m["end"] for m in marks)]
+
+    def hold_status(start: float, end: float, is_open: bool, sent: set[str], conversation_id: str) -> tuple[str, bool]:
+        """Whether Idea Machine can see a conversation, in words, and whether it can be released now."""
+        if conversation_id in sent:
+            return "in the stream", False
+        releases = read_releases(labels_dir)
+        if not held(start, end, releases, time.time()):
+            return ("released" if end + HOLD > time.time() else "two weeks up") + ": out at the next reprocess", False
+        return f"held until {datetime.fromtimestamp(end + HOLD, timezone.utc):%a %b %-d}", not is_open
 
     def append_tag(record: dict, path: Path = tags_path) -> None:
         record["tagged_at"] = datetime.now(timezone.utc).isoformat()
@@ -466,9 +510,20 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
         finally:
             db.close()
 
-    async def tag(request: Request, undo: bool) -> Response:
+    def applied(at: list[str]) -> bool:
+        """Whether a reprocess has applied the mark with this span: then it's final."""
+        start, end = (datetime.fromisoformat(t).timestamp() for t in at)
+        db = connect()
+        try:
+            return db.execute("SELECT 1 FROM forgotten WHERE start = ? AND end = ?", (start, end)).fetchone() is not None
+        finally:
+            db.close()
+
+    async def tag(request: Request, undo: bool, delete: bool = False) -> Response:
         """Tag a turn, or take its tag back: a clip record with no name (hearsay.turns.resolve).
-        The page's script gets 204 or 401 instead of a page to follow."""
+        Or delete it: throw it out (hearsay/forget.py), which can be taken back
+        until a reprocess applies it. The page's script gets 204 or 401 instead
+        of a page to follow."""
         script = request.headers.get("x-requested-with") == "fetch"
         if not logged_in(request):
             return Response(status_code=401) if script else RedirectResponse("/login", status_code=303)
@@ -476,11 +531,15 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
         turn_id = form.get("turn_id", [""])[0]
         category = "" if undo else form.get("category", [""])[0]
         turn = find_turn(turn_id)
-        if not turn or not (undo or category in CATEGORIES):
+        if not turn or not (undo or delete or category in CATEGORIES):
             return Response(status_code=404) if script else RedirectResponse("/", status_code=303)
         # Absolute times, so the tag survives new transcripts and boundaries;
         # the turn id only for reference.
-        append_tag({"type": "clip", "at": [wall(*turn)], "turn_ids": [turn_id], "name": category})
+        if not delete:
+            append_tag({"type": "clip", "at": [wall(*turn)], "turn_ids": [turn_id], "name": category})
+        elif not (undo and applied(wall(*turn))):
+            append_tag({"type": "undo" if undo else "forget", "at": wall(*turn), "turn_ids": [turn_id]},
+                       labels_dir / "forget.jsonl")
         return Response(status_code=204) if script else RedirectResponse("/", status_code=303)
 
     @app.post("/turn")
@@ -490,6 +549,14 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
     @app.post("/turn/undo")
     async def untag_turn(request: Request) -> Response:
         return await tag(request, undo=True)
+
+    @app.post("/turn/delete")
+    async def delete_turn(request: Request) -> Response:
+        return await tag(request, undo=False, delete=True)
+
+    @app.post("/turn/delete/undo")
+    async def undelete_turn(request: Request) -> Response:
+        return await tag(request, undo=True, delete=True)
 
     @app.get("/conversations")
     async def list_conversations(request: Request) -> Response:
@@ -502,6 +569,7 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
             conversations = db.execute(
                 "SELECT conversation_id, start, end, open FROM conversations ORDER BY start DESC").fetchall()
             places = conversation_places(db)
+            thrown_out = {c for (c,) in db.execute("SELECT conversation_id FROM forgotten")}
             turns = {}
             for conversation_id, idx, text in db.execute(
                     "SELECT conversation_id, idx, text FROM turns ORDER BY conversation_id, start, idx"):
@@ -509,7 +577,7 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
         finally:
             db.close()
 
-        items = []
+        items, sent = [], published(stream_dir)
         for conversation_id, start, end, is_open in conversations:
             here = places.get(conversation_id, [])
             if place and place not in {name for name, _, _ in here}:
@@ -521,6 +589,8 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
             url = f"/conversations/{quote(conversation_id)}" + (f"?q={quote(query)}" if query else "")
             names = list(dict.fromkeys(name for name, _, _ in here))
             facts = [f"{(end - start) / 60:.0f} min", *names, f"{len(said)} turn(s)"] + (["still going"] if is_open else [])
+            facts += ["some thrown out"] if conversation_id in thrown_out else []
+            facts.append(hold_status(start, end, is_open, sent, conversation_id)[0])
             shown = "".join(f"<li><a href='{url}#t{idx}'>{marked(text, query)}</a></li>"
                             for idx, text in matches[:MATCHES_SHOWN])
             more = f"<div class='muted'>and {len(matches) - MATCHES_SHOWN} more</div>" if len(matches) > MATCHES_SHOWN else ""
@@ -557,16 +627,36 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
                 "SELECT t.turn_id, t.idx, t.start, t.end, t.text, t.diar_speaker, ts.label, ts.basis FROM turns t"
                 " JOIN turn_speakers ts USING (turn_id) WHERE t.conversation_id = ? ORDER BY t.start, t.idx",
                 (conversation_id,)).fetchall()
+            applied = db.execute("SELECT start, end, reason FROM forgotten WHERE conversation_id = ?",
+                                 (conversation_id,)).fetchall()
         finally:
             db.close()
         if found is None:
             return Response(status_code=404)
         start, end, is_open, zero_at, wav_file = found
         zero = datetime.fromisoformat(zero_at).timestamp()
+
+        def clock(at: float) -> str:
+            return f"{datetime.fromtimestamp(at, timezone.utc):%H:%M:%S}"
+
+        # Stretches thrown out: those a reprocess has applied are final, their
+        # turns already gone; the rest can still be taken back.
+        done = {(s, e) for s, e, _ in applied}
+        pending = [m for m in read_marks(labels_dir)
+                   if m["start"] < end and m["end"] > start and (m["start"], m["end"]) not in done]
+        notes = sorted(
+            [(s, f"<li class='place muted'>Thrown out {clock(s)}–{clock(e)}"
+                 f"{html.escape(f' · {reason}') if reason else ''}</li>") for s, e, reason in applied]
+            + [(m["start"], f"<li class='place'>To throw out {clock(m['start'])}–{clock(m['end'])}"
+                            f"{html.escape(' · ' + m['reason']) if m['reason'] else ''} at the next reprocess"
+                            f"<button type='submit' formaction='/forget/undo' name='at'"
+                            f" value='{html.escape('|'.join(m['at']))}'>Undo</button></li>") for m in pending])
         voices = {}  # diarized speaker -> A, B, ... in order of first turn
         lines, last_place = [], None
         for turn_id, idx, turn_start, turn_end, text, voice, label, basis in turns:
             at = zero + turn_start
+            while notes and notes[0][0] <= at:
+                lines.append(notes.pop(0)[1])
             place = place_at(places, at)
             if place and place != last_place:
                 lines.append(f"<li class='place'>At {html.escape(place)}</li>")
@@ -574,22 +664,102 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
             if voice is not None and voice not in voices:
                 voices[voice] = letters(len(voices))
             speaker = who(label, tagged_as.get(turn_id), basis, voices.get(voice))
+            going = any(m["start"] < zero + turn_end and at < m["end"] for m in pending)
             lines.append(
-                f"<li id='t{idx}' class='turn{' left' if speaker.startswith('Left out') else ''}' data-start='{turn_start:.2f}'>"
-                f"<a class='at' href='/audio/{quote(turn_id)}'>{datetime.fromtimestamp(at, timezone.utc):%H:%M:%S}</a> "
+                f"<li id='t{idx}' class='turn{' left' if going or speaker.startswith('Left out') else ''}'"
+                f" data-start='{turn_start:.2f}'><input type='checkbox' name='turn_id' value='{html.escape(turn_id)}'"
+                f" aria-label='Choose'><a class='at' href='/audio/{quote(turn_id)}'>{clock(at)}</a> "
                 f"<span class='muted'>{html.escape(speaker)}</span><div>{marked(text, query)}</div></li>")
+        lines += [note for _, note in notes]
         player = (f"<div class='player'><audio id='player' controls preload='none'"
                   f" src='/conversations/{quote(conversation_id)}/audio'></audio></div>" if wav_file else
                   "<p class='muted'>No audio.</p>")
         names = list(dict.fromkeys(name for name, _, _ in places))
         facts = [f"{(end - start) / 60:.0f} min", *names, f"{len(turns)} turn(s)"] + (["still going"] if is_open else [])
+        status, releasable = hold_status(start, end, is_open, published(stream_dir), conversation_id)
+        release = (f"<form class='release' method='post' action='/release'>"
+                   f"<input type='hidden' name='conversation_id' value='{html.escape(conversation_id)}'>"
+                   "<button type='submit' name='action' value='release'>Release to Idea Machine now</button></form>"
+                   if releasable else "")
         return page("Hearsay conversation", f"""
 <p><a href="/conversations">← Conversations</a></p>
 <h1>{datetime.fromtimestamp(start, timezone.utc):%a %b %-d %H:%M} UTC</h1>
-<p class="muted">{html.escape(' · '.join(facts))}. Tap a time to play from there.</p>
+<p class="muted">{html.escape(' · '.join(facts))}. Idea Machine: {html.escape(status)}.</p>
+{release}
+<p class="muted">Tap a time to play from there. To throw out a stretch, check its first and last turns.</p>
 {player}
+<form method="post" action="/forget">
+<input type="hidden" name="conversation_id" value="{html.escape(conversation_id)}">
 <ul>{"".join(lines) or "<li class='muted'>Not transcribed yet.</li>"}</ul>
+<div class="forget">
+  <input name="reason" maxlength="{REASON_CHARACTERS}" autocomplete="off"
+         placeholder="Why (optional; Idea Machine sees it)" aria-label="Why">
+  <div class="row"><button type="submit" name="action" value="stretch">Throw out checked</button>
+  <button type="submit" name="action" value="whole">Throw out all</button></div>
+</div>
+</form>
 <script>{TRANSCRIPT_SCRIPT}</script>""")
+
+    @app.post("/forget")
+    async def throw_out(request: Request) -> Response:
+        """Throw out from the first turn checked to the last, or the whole
+        conversation: a mark by absolute time, which a reprocess applies."""
+        if not logged_in(request):
+            return RedirectResponse("/login", status_code=303)
+        form = parse_qs((await request.body()).decode())
+        conversation_id = form.get("conversation_id", [""])[0]
+        action = form.get("action", [""])[0]
+        reason = " ".join(form.get("reason", [""])[0].split())[:REASON_CHARACTERS]
+        chosen = set(form.get("turn_id", []))
+        db = connect()
+        try:
+            conversation = db.execute("SELECT start, end FROM conversations WHERE conversation_id = ?",
+                                      (conversation_id,)).fetchone()
+            spans = [(datetime.fromisoformat(zero_at).timestamp() + s, datetime.fromisoformat(zero_at).timestamp() + e)
+                     for turn_id, zero_at, s, e in db.execute(
+                         "SELECT t.turn_id, ca.zero_at, t.start, t.end FROM turns t"
+                         " JOIN conversation_audio ca USING (conversation_id) WHERE t.conversation_id = ?",
+                         (conversation_id,)) if turn_id in chosen]
+        finally:
+            db.close()
+        if conversation is None:
+            return RedirectResponse("/conversations", status_code=303)
+        if action == "whole":
+            append_tag({"type": "forget", "at": whole_seconds(*conversation), "reason": reason},
+                       labels_dir / "forget.jsonl")
+        elif action == "stretch" and spans:
+            span = (min(s for s, _ in spans), max(e for _, e in spans))
+            append_tag({"type": "forget", "at": [datetime.fromtimestamp(t, timezone.utc).isoformat() for t in span],
+                        "reason": reason}, labels_dir / "forget.jsonl")
+        return RedirectResponse(f"/conversations/{quote(conversation_id)}", status_code=303)
+
+    @app.post("/release")
+    async def release(request: Request) -> Response:
+        """Let a conversation that has ended reach the stream before its two weeks are up."""
+        if not logged_in(request):
+            return RedirectResponse("/login", status_code=303)
+        conversation_id = parse_qs((await request.body()).decode()).get("conversation_id", [""])[0]
+        db = connect()
+        try:
+            conversation = db.execute("SELECT start, end, open FROM conversations WHERE conversation_id = ?",
+                                      (conversation_id,)).fetchone()
+        finally:
+            db.close()
+        if conversation and not conversation[2]:
+            append_tag({"type": "release", "at": whole_seconds(*conversation[:2])}, labels_dir / "release.jsonl")
+        return RedirectResponse(f"/conversations/{quote(conversation_id)}", status_code=303)
+
+    @app.post("/forget/undo")
+    async def take_back(request: Request) -> Response:
+        """Take a mark back, unless a reprocess has applied it: then it's final."""
+        if not logged_in(request):
+            return RedirectResponse("/login", status_code=303)
+        form = parse_qs((await request.body()).decode())
+        conversation_id = form.get("conversation_id", [""])[0]
+        at = form.get("at", [""])[0].split("|")
+        if len(at) == 2 and not applied(at):
+            append_tag({"type": "undo", "at": at}, labels_dir / "forget.jsonl")
+        return RedirectResponse(f"/conversations/{quote(conversation_id)}", status_code=303)
 
     @app.get("/conversations/{conversation_id}/audio")
     async def conversation_audio(request: Request, conversation_id: str) -> Response:
@@ -890,6 +1060,8 @@ def app_from_env() -> FastAPI:
         Path(os.environ["HEARSAY_DB"]),
         Path(os.environ["HEARSAY_AUDIO_DIR"]),
         Path(os.environ["HEARSAY_LABELS_DIR"]),
+        # The stream, read-only, to say what Idea Machine can see (install/compose.yaml).
+        Path(os.environ["HEARSAY_STREAM_DIR"]),
         os.environ["HEARSAY_PORTAL_USER"],
         os.environ["HEARSAY_PORTAL_PASSWORD"],
         os.environ["HEARSAY_SESSION_KEY"],
