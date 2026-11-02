@@ -24,11 +24,14 @@ services:
       HEARSAY_DB: /data/db/hearsay.sqlite
       HEARSAY_AUDIO_DIR: /data/audio
       HEARSAY_LABELS_DIR: /data/labels
+      HEARSAY_STREAM_DIR: /data/stream
       HEARSAY_VOCAB_FILE: /data/vocab/vocab.json
     volumes:
       - /mnt/fast/hearsay/db:/data/db:ro
       - /mnt/fast/hearsay/audio:/data/audio:ro
       - /mnt/fast/hearsay/labels:/data/labels
+      # Only to say which conversations Idea Machine can see.
+      - /mnt/fast/hearsay/stream:/data/stream:ro
       # Idea Machine's vocab folder is mounted by compose.vocab.yaml, which
       # install/nas.sh adds only when the folder exists.
     ports:

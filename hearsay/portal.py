@@ -24,7 +24,9 @@ The Conversations page lists every conversation, newest first, narrowed to
 a named place or to those whose words contain a search, and opens each as
 its transcript in order: every turn with when, where and who the stream
 says said it (or why it's left out), and the conversation's audio, which
-plays from any turn on. It reads what the last reprocess wrote; the
+plays from any turn on. Each says whether it's in the stream yet, read from
+the stream's index, or held, and until when (hearsay/hold.py); the operator
+can release an ended one early (labels/release.jsonl). It reads what the last reprocess wrote; the
 transcript is the first part of roadmap slice 20.
 
 On a conversation's page the operator throws out a stretch, from the first
@@ -44,6 +46,7 @@ import hmac
 import html
 import io
 import json
+import math
 import os
 import re
 import sqlite3
@@ -57,6 +60,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from hearsay.forget import read_marks
+from hearsay.hold import HOLD, held, read_releases
 from hearsay.media import HINT
 from hearsay.places import (
     LOOKBACK,
@@ -69,7 +73,7 @@ from hearsay.places import (
     unnamed_spots,
     visits,
 )
-from hearsay.stream import letters, speaker_kind
+from hearsay.stream import letters, published, speaker_kind
 from hearsay.turns import categories, read_operator_files, resolve, wall
 from hearsay.words import boosted, commit, read_committed, read_draft, read_lattice, save_draft, tidy
 
@@ -159,6 +163,7 @@ textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 0.6rem; 
 .forget input { padding: 0.4rem; }
 .forget .row button { font-size: 0.85em; padding: 0.5rem; }
 mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; }
+.release button { margin-top: 0; }
 """
 
 # Tags a clip without leaving the page, and collapses it to an Undo button that
@@ -205,7 +210,9 @@ document.addEventListener('click', event => {
   player.play();
 });
 document.addEventListener('submit', event => {
-  if (event.submitter?.value === 'whole' && !confirm('Throw out this whole conversation?')) event.preventDefault();
+  const ask = {whole: 'Throw out this whole conversation?',
+               release: 'Release this conversation? Idea Machine gets it at the next reprocess.'}[event.submitter?.value];
+  if (ask && !confirm(ask)) event.preventDefault();
 });
 player?.addEventListener('timeupdate', () => {
   let now = null;
@@ -300,6 +307,12 @@ def conversation_places(db: sqlite3.Connection) -> dict[str, list[tuple[str, flo
     return places
 
 
+def whole_seconds(start: float, end: float) -> list[str]:
+    """A conversation's span widened to whole seconds, so that a record of it,
+    read back from text, still covers the conversation as stored."""
+    return [datetime.fromtimestamp(t, timezone.utc).isoformat() for t in (math.floor(start), math.ceil(end))]
+
+
 def place_at(places: list[tuple[str, float, float]], at: float) -> str | None:
     """The named place a moment was at, from a conversation's places in order.
     A place lasts until the next one starts (hearsay/places.py)."""
@@ -350,8 +363,8 @@ def heard_at_spot(spot_times: list[float], times: list[float], turns: list[tuple
     return (picked + [t for t in found if t not in picked])[:PLACE_CLIPS]
 
 
-def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, user: str, password: str, session_key: str,
-               app_token: str = "", vocab_path: Path | None = None) -> FastAPI:
+def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Path, user: str, password: str,
+               session_key: str, app_token: str = "", vocab_path: Path | None = None) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     tags_path = labels_dir / "tags.jsonl"
 
@@ -397,6 +410,15 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, user: str, pass
             row["place"] = place_at(places.get(row["conversation_id"], []), row["at"])
         return [row for row in rows if not any(
             m["start"] < row["at"] + row["end"] - row["start"] and row["at"] < m["end"] for m in marks)]
+
+    def hold_status(start: float, end: float, is_open: bool, sent: set[str], conversation_id: str) -> tuple[str, bool]:
+        """Whether Idea Machine can see a conversation, in words, and whether it can be released now."""
+        if conversation_id in sent:
+            return "in the stream", False
+        releases = read_releases(labels_dir)
+        if not held(start, end, releases, time.time()):
+            return ("released" if end + HOLD > time.time() else "two weeks up") + ": out at the next reprocess", False
+        return f"held until {datetime.fromtimestamp(end + HOLD, timezone.utc):%a %b %-d}", not is_open
 
     def append_tag(record: dict, path: Path = tags_path) -> None:
         record["tagged_at"] = datetime.now(timezone.utc).isoformat()
@@ -555,7 +577,7 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
         finally:
             db.close()
 
-        items = []
+        items, sent = [], published(stream_dir)
         for conversation_id, start, end, is_open in conversations:
             here = places.get(conversation_id, [])
             if place and place not in {name for name, _, _ in here}:
@@ -568,6 +590,7 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
             names = list(dict.fromkeys(name for name, _, _ in here))
             facts = [f"{(end - start) / 60:.0f} min", *names, f"{len(said)} turn(s)"] + (["still going"] if is_open else [])
             facts += ["some thrown out"] if conversation_id in thrown_out else []
+            facts.append(hold_status(start, end, is_open, sent, conversation_id)[0])
             shown = "".join(f"<li><a href='{url}#t{idx}'>{marked(text, query)}</a></li>"
                             for idx, text in matches[:MATCHES_SHOWN])
             more = f"<div class='muted'>and {len(matches) - MATCHES_SHOWN} more</div>" if len(matches) > MATCHES_SHOWN else ""
@@ -653,11 +676,17 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
                   "<p class='muted'>No audio.</p>")
         names = list(dict.fromkeys(name for name, _, _ in places))
         facts = [f"{(end - start) / 60:.0f} min", *names, f"{len(turns)} turn(s)"] + (["still going"] if is_open else [])
+        status, releasable = hold_status(start, end, is_open, published(stream_dir), conversation_id)
+        release = (f"<form class='release' method='post' action='/release'>"
+                   f"<input type='hidden' name='conversation_id' value='{html.escape(conversation_id)}'>"
+                   "<button type='submit' name='action' value='release'>Release to Idea Machine now</button></form>"
+                   if releasable else "")
         return page("Hearsay conversation", f"""
 <p><a href="/conversations">← Conversations</a></p>
 <h1>{datetime.fromtimestamp(start, timezone.utc):%a %b %-d %H:%M} UTC</h1>
-<p class="muted">{html.escape(' · '.join(facts))}. Tap a time to play from there. To throw out a stretch,
-check its first and last turns.</p>
+<p class="muted">{html.escape(' · '.join(facts))}. Idea Machine: {html.escape(status)}.</p>
+{release}
+<p class="muted">Tap a time to play from there. To throw out a stretch, check its first and last turns.</p>
 {player}
 <form method="post" action="/forget">
 <input type="hidden" name="conversation_id" value="{html.escape(conversation_id)}">
@@ -695,11 +724,29 @@ check its first and last turns.</p>
             db.close()
         if conversation is None:
             return RedirectResponse("/conversations", status_code=303)
-        span = conversation if action == "whole" else (
-            (min(s for s, _ in spans), max(e for _, e in spans)) if action == "stretch" and spans else None)
-        if span:
+        if action == "whole":
+            append_tag({"type": "forget", "at": whole_seconds(*conversation), "reason": reason},
+                       labels_dir / "forget.jsonl")
+        elif action == "stretch" and spans:
+            span = (min(s for s, _ in spans), max(e for _, e in spans))
             append_tag({"type": "forget", "at": [datetime.fromtimestamp(t, timezone.utc).isoformat() for t in span],
                         "reason": reason}, labels_dir / "forget.jsonl")
+        return RedirectResponse(f"/conversations/{quote(conversation_id)}", status_code=303)
+
+    @app.post("/release")
+    async def release(request: Request) -> Response:
+        """Let a conversation that has ended reach the stream before its two weeks are up."""
+        if not logged_in(request):
+            return RedirectResponse("/login", status_code=303)
+        conversation_id = parse_qs((await request.body()).decode()).get("conversation_id", [""])[0]
+        db = connect()
+        try:
+            conversation = db.execute("SELECT start, end, open FROM conversations WHERE conversation_id = ?",
+                                      (conversation_id,)).fetchone()
+        finally:
+            db.close()
+        if conversation and not conversation[2]:
+            append_tag({"type": "release", "at": whole_seconds(*conversation[:2])}, labels_dir / "release.jsonl")
         return RedirectResponse(f"/conversations/{quote(conversation_id)}", status_code=303)
 
     @app.post("/forget/undo")
@@ -1013,6 +1060,8 @@ def app_from_env() -> FastAPI:
         Path(os.environ["HEARSAY_DB"]),
         Path(os.environ["HEARSAY_AUDIO_DIR"]),
         Path(os.environ["HEARSAY_LABELS_DIR"]),
+        # The stream, read-only, to say what Idea Machine can see (install/compose.yaml).
+        Path(os.environ["HEARSAY_STREAM_DIR"]),
         os.environ["HEARSAY_PORTAL_USER"],
         os.environ["HEARSAY_PORTAL_PASSWORD"],
         os.environ["HEARSAY_SESSION_KEY"],

@@ -164,8 +164,13 @@ conversation's revision to change.
 Throwing out is the operator's input, applied on every reprocess, so a re-run from raw never brings it back into the
 stream. Raw payloads and audio of a thrown-out stretch are kept until retention (roadmap slice 12) deletes them.
 
-Slice 20 also holds each conversation back for two weeks, or until the operator releases it: until then it isn't in the
-index at all. That's additive, so `format_version` stays 1.
+## The hold
+
+A conversation enters the stream two weeks after it ends, or sooner when the operator releases it (only one that has
+ended can be): until then it isn't in the index at all, nor its file, taps or places. That's additive, so
+`format_version` stays 1, but captures, self-notes too, arrive up to two weeks late. Once in, a conversation stays: the
+stream never withdraws a conversation it has published, so whatever was in it before the hold began stays too. Only
+`forgotten.json` takes anything out.
 
 ## Guarantees
 
