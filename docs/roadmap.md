@@ -499,6 +499,36 @@ to audio still kept, so changing models is a deliberate migration.
 Done when: a rebuild from the records equals a rebuild from raw, and a
 reprocess with nothing new reads no audio.
 
+Decided 2026-11-02 (`hearsay/records.py`):
+
+- A conversation seals a week after it ends, once transcribed and every one
+  before it sealed, so a seal line runs through the timeline: behind it
+  everything comes from records, past it from raw. A week, not the two-week
+  hold, so a reprocess reads only the last week's audio; sealing doesn't
+  touch the hold or throwing out, which act on turns after they're loaded.
+- A record keeps what the audio gave, not what was decided from it: the
+  conversation's boundaries and audio facts, the transcript as the dev box
+  wrote it, and per turn its coverage, embedding, the short embedding for
+  the veto (now made whether or not the owner is enrolled), the Mac channel
+  that was louder, and the music and tone scores. An upload behind the line
+  keeps the rows parsing made from it except its audio (marks, locations),
+  and the owner's enrollment pieces are kept embedded, so neither is read
+  again.
+- Re-running sealed conversations from audio is deliberate: a Words update
+  or a new model reaches only unsealed ones, and `python -m
+  hearsay.records unseal <date>` moves the line back while the audio is
+  kept. An import or late pendant audio behind the line unseals back to it
+  by itself.
+- Tone stays the owner's only (hearsay/affect.py: others' emotional state
+  isn't inferred), so a sealed turn that becomes the owner's later, by a new
+  enrollment or threshold, has no tone score.
+- Thrown-out words stay in a record's transcript until slice 12 deletes
+  them with the audio; on every reprocess they're removed after loading, as
+  from raw.
+- Sealing also lets reprocess drop the decoded audio behind the line from
+  its cache (`db/capture-pcm`, `db/imports-pcm`), which is most of the 6 GB
+  there.
+
 ## 20. Throw out what was said, and hold the stream two weeks
 
 The operator can't take anything back once it's said near the pendant: it

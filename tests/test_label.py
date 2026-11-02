@@ -11,12 +11,12 @@ def test_music_pool_is_quiet_turns_with_their_voice_label():
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
     db.executescript(AUDIO_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + MUSIC_SCHEMA)
-    db.execute("INSERT INTO conversation_audio VALUES ('c1', '2026-10-01T20:00:00+00:00', 60, 1, 'c1.wav', 'x')")
+    db.execute("INSERT INTO conversation_audio VALUES ('c1', '2026-10-01T20:00:00+00:00', 60, 1, 'c1.wav', 'x', 0)")
     for i, (speech, label) in enumerate(((0.1, "owner"), (0.2, None), (0.9, "owner"))):
         db.execute("INSERT INTO turns VALUES (?, 'c1', ?, ?, ?, 'la la', 'S0', 0.9)", (f"c1:{i}", i, i * 2, i * 2 + 1))
         db.execute("INSERT INTO turn_music VALUES (?, ?, 0, 0.5)", (f"c1:{i}", speech))
         if label:
-            db.execute("INSERT INTO turn_speakers VALUES (?, 'c1', 1, NULL, NULL, ?, 'voice')", (f"c1:{i}", label))
+            db.execute("INSERT INTO turn_speakers VALUES (?, 'c1', 1, NULL, NULL, ?, 'voice', NULL, NULL)", (f"c1:{i}", label))
     pool = [dict(row) for row in db.execute(MUSIC_SQL)]
     assert sorted((t["turn_id"], t["label"]) for t in pool) == [("c1:0", "owner"), ("c1:1", None)]
 

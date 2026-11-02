@@ -91,8 +91,10 @@ services:
       HEARSAY_TRANSCRIPTS_DIR: /data/transcripts
       HEARSAY_IMPORTS_DIR: /data/imports
       HEARSAY_STREAM_DIR: /data/stream
+      HEARSAY_RECORDS_DIR: /data/records
     volumes:
       - /mnt/fast/hearsay/raw:/data/raw:ro
+      - /mnt/fast/hearsay/records:/data/records
       - /mnt/fast/hearsay/db:/data/db
       - /mnt/fast/hearsay/audio:/data/audio
       - /mnt/fast/hearsay/labels:/data/labels:ro

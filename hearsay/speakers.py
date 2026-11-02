@@ -17,6 +17,10 @@ Inside a Mac recording the channels say who spoke, which beats voice: a
 turn clearly louder on the mic is the owner's, one clearly louder on the call
 (system audio) isn't, at any length. Turns where both are loud (crosstalk,
 echo from speakers) fall back to voice.
+
+A sealed turn (hearsay/records.py) takes what its audio gave (coverage,
+embeddings, channel) from its record, and so does an enrollment window
+behind the seal line; the labeling from them re-runs as for any other.
 """
 
 import json
@@ -62,6 +66,7 @@ CHANNEL_RATIO = 4.0
 SCHEMA = """
 DROP TABLE IF EXISTS turn_speakers;
 DROP TABLE IF EXISTS owner_enrollment;
+DROP TABLE IF EXISTS enrollment_pieces;
 -- One row per turn.
 CREATE TABLE turn_speakers (
     turn_id TEXT PRIMARY KEY REFERENCES turns(turn_id),
@@ -70,13 +75,22 @@ CREATE TABLE turn_speakers (
     embedding BLOB,                  -- float32 x 192, NULL if too short or too little audio
     owner_similarity REAL,           -- cosine similarity to the enrolled owner voice
     label TEXT,                      -- owner | not_owner | NULL (ambiguous or unknown)
-    basis TEXT                       -- voice | channel | diarization (inherited) | NULL when unlabeled
+    basis TEXT,                      -- voice | channel | diarization (inherited) | NULL when unlabeled
+    -- What the audio gave besides, kept for sealing (hearsay/records.py):
+    veto_embedding BLOB,             -- a turn too short for embedding, for the veto in inherit_labels
+    channel TEXT                     -- the Mac channel clearly louder: owner | not_owner | NULL
 );
 CREATE TABLE owner_enrollment (
     start TEXT NOT NULL,
     end TEXT NOT NULL,
     coverage REAL NOT NULL,
     pieces INTEGER NOT NULL          -- ENROLLMENT_PIECE-second pieces embedded
+);
+-- Each enrollment piece's embedding, kept for sealing.
+CREATE TABLE enrollment_pieces (
+    start TEXT NOT NULL,
+    end TEXT NOT NULL,
+    vector BLOB NOT NULL
 );
 """
 
@@ -93,6 +107,19 @@ def load_model(model_dir: Path):
         overrides={"pretrained_path": str(model_dir)},
         run_opts={"device": "cpu"},
     )
+
+
+class Encoder:
+    """The speaker model, loaded only when audio first needs embedding: a run
+    whose turns are all cached or sealed (hearsay/records.py) never loads it."""
+
+    def __init__(self, model_dir: Path):
+        self.model_dir, self.model = model_dir, None
+
+    def encode_batch(self, samples):
+        if self.model is None:
+            self.model = load_model(self.model_dir)
+        return self.model.encode_batch(samples)
 
 
 # Cache key prefix: the speaker model that produced a cached embedding.
@@ -127,17 +154,25 @@ def owner_voice(model, raw_dir: Path, bursts: list, labels_dir: Path, db: sqlite
     path = labels_dir / "enrollment.json"
     if not path.exists():
         return None
+    sealed = {}
+    for start, end, coverage, vector in db.execute("SELECT start, end, coverage, vector FROM sealed_enrollment"):
+        sealed.setdefault((start, end), (coverage, []))[1].append(list(array("f", vector)))
     vectors = []
     for window in json.loads(path.read_text()):
         start, end = timestamp(window["start"]), timestamp(window["end"])
-        _, coverage = cut(raw_dir, bursts, start, end - start)
-        used = 0
-        for k in range(int((end - start) // ENROLLMENT_PIECE)):
-            pcm, piece_coverage = cut(raw_dir, bursts, start + k * ENROLLMENT_PIECE, ENROLLMENT_PIECE)
-            if piece_coverage >= MIN_COVERAGE:
-                vectors.append(embed(model, pcm, cache))
-                used += 1
-        db.execute("INSERT INTO owner_enrollment VALUES (?,?,?,?)", (window["start"], window["end"], coverage, used))
+        if (window["start"], window["end"]) in sealed:
+            coverage, found = sealed[(window["start"], window["end"])]
+        else:
+            _, coverage = cut(raw_dir, bursts, start, end - start)
+            found = []
+            for k in range(int((end - start) // ENROLLMENT_PIECE)):
+                pcm, piece_coverage = cut(raw_dir, bursts, start + k * ENROLLMENT_PIECE, ENROLLMENT_PIECE)
+                if piece_coverage >= MIN_COVERAGE:
+                    found.append(embed(model, pcm, cache))
+        vectors += found
+        db.execute("INSERT INTO owner_enrollment VALUES (?,?,?,?)", (window["start"], window["end"], coverage, len(found)))
+        db.executemany("INSERT INTO enrollment_pieces VALUES (?,?,?)",
+                       [(window["start"], window["end"], array("f", v).tobytes()) for v in found])
     if not vectors:
         raise ValueError(f"{path}: no usable audio in the enrollment windows")
     return mean_unit(vectors)
@@ -206,7 +241,7 @@ def by_channel(raw_dir: Path, channels: dict[str, list], start: float, duration:
 
 def label_speakers(raw_dir: Path, db_path: Path, labels_dir: Path, model_dir: Path,
                    cache: Cache | None = None) -> dict:
-    model = load_model(model_dir)
+    model = Encoder(model_dir)
     db = sqlite3.connect(db_path)
     try:
         db.executescript(SCHEMA)
@@ -219,33 +254,42 @@ def label_speakers(raw_dir: Path, db_path: Path, labels_dir: Path, model_dir: Pa
             " ORDER BY ca.zero_at, t.idx"
         ).fetchall()
         channels = mac_channels(db)
-        counts = {"turns": len(turns), "embedded": 0, "owner": 0, "not_owner": 0, "by_channel": 0}
+        sealed = {row[0]: row[1:] for row in db.execute(
+            "SELECT turn_id, coverage, embedding, veto_embedding, channel FROM sealed_turns")}
+        counts = {"turns": len(turns), "embedded": 0, "owner": 0, "not_owner": 0, "by_channel": 0, "sealed": 0}
         # Turns too short to label by voice, embedded anyway for the veto in
-        # inherit_labels. Kept out of the table: a short turn's embedding is
-        # too noisy to label or cluster with.
+        # inherit_labels. Kept out of the embedding column: a short turn's
+        # embedding is too noisy to label or cluster with.
         short = {}
         for turn_id, conversation_id, zero_at, start, end in turns:
             duration = max(0.0, end - start)
-            pcm, coverage = cut(raw_dir, bursts, timestamp(zero_at) + start, duration) if duration else (b"", 0.0)
-            channel = by_channel(raw_dir, channels, timestamp(zero_at) + start, duration)
-            embedding = similarity = label = None
-            if duration >= MIN_TURN and coverage >= MIN_COVERAGE:
-                vector = embed(model, pcm, cache)
-                embedding = array("f", vector).tobytes()
+            if turn_id in sealed:
+                coverage, embedding, veto, channel = sealed[turn_id]
+                counts["sealed"] += 1
+            else:
+                pcm, coverage = cut(raw_dir, bursts, timestamp(zero_at) + start, duration) if duration else (b"", 0.0)
+                channel = by_channel(raw_dir, channels, timestamp(zero_at) + start, duration)
+                embedding = veto = None
+                if duration >= MIN_TURN and coverage >= MIN_COVERAGE:
+                    embedding = array("f", embed(model, pcm, cache)).tobytes()
+                elif channel is None and duration >= MIN_EMBED and coverage >= MIN_COVERAGE:
+                    veto = array("f", embed(model, pcm, cache)).tobytes()
+            similarity = label = None
+            if embedding is not None:
                 counts["embedded"] += 1
                 if owner is not None:
-                    similarity = cosine(vector, owner)
+                    similarity = cosine(list(array("f", embedding)), owner)
                     label = label_for(similarity)
-            elif owner is not None and channel is None and duration >= MIN_EMBED and coverage >= MIN_COVERAGE:
-                short[turn_id] = embed(model, pcm, cache)
+            if veto is not None:
+                short[turn_id] = list(array("f", veto))
             label, basis = with_channel(label, channel)
             if basis == "channel":
                 counts["by_channel"] += 1
             if label:
                 counts[label] += 1
             db.execute(
-                "INSERT INTO turn_speakers VALUES (?,?,?,?,?,?,?)",
-                (turn_id, conversation_id, coverage, embedding, similarity, label, basis),
+                "INSERT INTO turn_speakers VALUES (?,?,?,?,?,?,?,?,?)",
+                (turn_id, conversation_id, coverage, embedding, similarity, label, basis, veto, channel),
             )
         counts.update(inherit_labels(db, owner, short))
         db.commit()

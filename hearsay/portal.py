@@ -1068,7 +1068,8 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
         clashes = [sorted(ws) for ws in spellings.values() if len(ws) > 1]
         db = connect()
         try:
-            [(conversations,)] = db.execute("SELECT count(*) FROM conversation_audio WHERE wav_file IS NOT NULL").fetchall()
+            [(conversations,)] = db.execute(
+                "SELECT count(*) FROM conversation_audio WHERE wav_file IS NOT NULL AND NOT sealed").fetchall()
         finally:
             db.close()
 
@@ -1081,8 +1082,8 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
                        f"{html.escape('; '.join(', '.join(ws) for ws in clashes))}. Parakeet leans toward each spelling.</p>")
         update = ("" if error or not changes else
                   f"<form method='post' action='/words'><input type='hidden' name='seen' value='{words_seen(proposed)}'>"
-                  f"<button type='submit' name='action' value='update'>Update: re-transcribes all {conversations}"
-                  " conversation(s)</button></form>")
+                  f"<button type='submit' name='action' value='update'>Update: re-transcribes the {conversations}"
+                  " conversation(s) from the last week</button></form>")
         box = html.escape("\n".join(typed))
         discard = ("<form method='post' action='/words'><button type='submit' name='action' value='discard'>"
                    "Discard draft</button></form>" if read_draft(labels_dir) is not None else "")

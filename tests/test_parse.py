@@ -12,6 +12,7 @@ from hearsay.assemble import assemble
 from hearsay.conversations import find_conversations
 from hearsay.imports import load_imports
 from hearsay.parse import ParseFailed, rebuild
+from hearsay.records import PAYLOAD_TABLES
 from hearsay.speakers import label_speakers
 from hearsay.turns import build_turns, record_operator_input
 
@@ -78,7 +79,8 @@ def test_rebuild_parses_every_type_is_repeatable_and_leaves_raw_untouched(tmp_pa
 
     assert snapshot(raw) == before
     assert dump(tmp_path / "a.sqlite") == dump(tmp_path / "b.sqlite")
-    assert counts == {"transcript": 2, "audio": 2, "memory": 1, "capture": 0, "duplicate": 1, "incomplete": 1}
+    assert counts == {"transcript": 2, "audio": 2, "memory": 1, "capture": 0, "duplicate": 1, "sealed": 0,
+                      "incomplete": 1}
 
     db = sqlite3.connect(tmp_path / "a.sqlite")
     live = db.execute(
@@ -95,6 +97,22 @@ def test_rebuild_parses_every_type_is_repeatable_and_leaves_raw_untouched(tmp_pa
         ("2026-01-01T12:00:00.000000+00:00", 5.0)
     ]
     assert db.execute("SELECT sample_rate FROM audio_chunks").fetchall() == [(16000,), (16000,)]
+
+    # Sealed (hearsay/records.py), audio uploads load from their rows, and their files aren't opened.
+    sealed = {path: {table: [list(r) for r in db.execute(f"SELECT * FROM {table} WHERE {key} = ?", (path,))]
+                     for table, key in PAYLOAD_TABLES.items()}
+              for (path,) in db.execute("SELECT path FROM payloads WHERE type = 'audio'")}
+    db.close()
+    for path in sealed:
+        (raw / path).write_bytes(b"not what the sidecar says")
+    counts = rebuild(raw, tmp_path / "c.sqlite", sealed)
+    assert counts["sealed"] == 2 and counts["audio"] == 0
+    db = sqlite3.connect(tmp_path / "c.sqlite")
+    db.execute("ATTACH DATABASE ? AS a", (str(tmp_path / "a.sqlite"),))
+    columns = "path, type, received_at, uid, idempotency_key, body_bytes, body_sha256, duplicate_of, first_at, last_at"
+    assert db.execute(f"SELECT {columns} FROM payloads EXCEPT SELECT {columns} FROM a.payloads").fetchall() == []
+    assert db.execute("SELECT count(*) FROM payloads WHERE sealed").fetchone() == (2,)
+    assert db.execute("SELECT count(*) FROM audio_chunks").fetchone() == (0,)  # no audio behind the line
     db.close()
 
 

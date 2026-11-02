@@ -41,11 +41,15 @@ def decode(source: Path, target: Path) -> None:
     tmp.replace(target)
 
 
-def load_imports(imports_dir: Path, db_path: Path, cache_dir: Path) -> dict:
+def load_imports(imports_dir: Path, db_path: Path, cache_dir: Path, sealed: set[str] = frozenset()) -> dict:
+    """Imports sealed behind the line (hearsay/records.py) are skipped: their
+    conversations come from records."""
     cache_dir.mkdir(parents=True, exist_ok=True)
     rows = []
     for sidecar_path in sorted(imports_dir.glob("*.json")):
         sidecar = json.loads(sidecar_path.read_text())
+        if sidecar["file"] in sealed:
+            continue
         source = imports_dir / sidecar["file"]
         sha = hashlib.sha256(source.read_bytes()).hexdigest()
         if sha != sidecar["sha256"]:

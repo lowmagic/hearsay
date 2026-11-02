@@ -95,18 +95,31 @@ def split_turns(segments: list[dict]) -> list[dict]:
     return turns
 
 
+def transcript_for(db: sqlite3.Connection, transcripts_dir: Path, conversation_id: str) -> dict | None:
+    """The transcript a conversation's turns are built from: its record's when
+    sealed (hearsay/records.py), else the dev box's, only if made from its WAV."""
+    [(wav_sha256, sealed)] = db.execute("SELECT wav_sha256, sealed FROM conversation_audio WHERE conversation_id = ?",
+                                        (conversation_id,)).fetchall()
+    if sealed:
+        [(text,)] = db.execute("SELECT transcript FROM sealed_conversations WHERE conversation_id = ?",
+                               (conversation_id,)).fetchall()
+        return json.loads(text) if text is not None else None
+    path = transcripts_dir / f"{conversation_id}.json"
+    transcript = json.loads(path.read_text()) if path.exists() else None
+    return transcript if transcript is not None and transcript["wav_sha256"] == wav_sha256 else None
+
+
 def build_turns(db_path: Path, transcripts_dir: Path) -> dict:
     db = sqlite3.connect(db_path)
     counts = {"conversations": 0, "transcribed": 0, "pending": 0, "turns": 0}
     try:
         db.executescript(SCHEMA)
-        for conversation_id, wav_sha256 in db.execute(
-            "SELECT conversation_id, wav_sha256 FROM conversation_audio WHERE wav_file IS NOT NULL ORDER BY conversation_id"
+        for (conversation_id,) in db.execute(
+            "SELECT conversation_id FROM conversation_audio WHERE wav_sha256 IS NOT NULL ORDER BY conversation_id"
         ).fetchall():
             counts["conversations"] += 1
-            path = transcripts_dir / f"{conversation_id}.json"
-            transcript = json.loads(path.read_text()) if path.exists() else None
-            if transcript is None or transcript["wav_sha256"] != wav_sha256:
+            transcript = transcript_for(db, transcripts_dir, conversation_id)
+            if transcript is None:
                 counts["pending"] += 1
                 continue
             counts["transcribed"] += 1

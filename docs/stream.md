@@ -144,8 +144,9 @@ Hearsay reads only `term`; `source` and the optional `heard_as` are Idea Machine
 `format_version`, or one that can't be read, gives no terms, and the portal's Words page says why. No file is no terms.
 
 Nothing reaches transcription until the operator presses Update on the Words page, which commits these terms and the
-words typed there, as they are then. Every Update changes the transcription settings, so every conversation is
-transcribed again, with new `transcript_revision`s and renumbered ids throughout the stream.
+words typed there, as they are then. Every Update changes the transcription settings, so every conversation not yet
+sealed (about the last week) is transcribed again, with new `transcript_revision`s and renumbered ids;
+older conversations change only when the operator unseals them.
 
 ## Forgetting
 

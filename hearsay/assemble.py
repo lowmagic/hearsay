@@ -2,7 +2,9 @@
 
 Reads the conversations found in the stream (hearsay/conversations.py) and
 the raw audio bodies. Writes one WAV per conversation plus the
-conversation_audio table. Everything here is derived from raw and is rebuilt
+conversation_audio table. A sealed conversation (hearsay/records.py) is
+taken from its record and its WAV left as it is, without reading it; once
+retention deletes the WAV, it has none. Everything here is derived from raw and is rebuilt
 on every run, but a WAV is only written when its bytes change: the NAS
 snapshots the audio, so rewriting unchanged WAVs would keep copies of them.
 
@@ -38,7 +40,8 @@ CREATE TABLE conversation_audio (
     duration REAL NOT NULL,          -- seconds
     coverage REAL NOT NULL,          -- fraction of duration with received audio
     wav_file TEXT,                   -- relative to the audio dir; NULL if no audio
-    wav_sha256 TEXT                  -- transcripts are only used for this exact WAV
+    wav_sha256 TEXT,                 -- transcripts are only used for this exact WAV
+    sealed INTEGER NOT NULL          -- 1 if from its record (hearsay/records.py): never cut again
 );
 """
 
@@ -156,11 +159,18 @@ def assemble(raw_dir: Path, db_path: Path, audio_dir: Path) -> dict:
     db = sqlite3.connect(db_path)
     try:
         bursts = place_bursts(db)
+        sealed = {row[0]: row[1:] for row in db.execute(
+            "SELECT conversation_id, zero_at, duration, coverage, wav_sha256 FROM sealed_conversations")}
         rows = []
         written = 0
         for conversation_id, start, end in db.execute(
             "SELECT conversation_id, start, end FROM conversations ORDER BY start"
         ).fetchall():
+            if conversation_id in sealed:
+                zero_at, duration, coverage, wav_sha256 = sealed[conversation_id]
+                wav_file = f"{conversation_id}.wav" if wav_sha256 and (audio_dir / f"{conversation_id}.wav").exists() else None
+                rows.append((conversation_id, zero_at, duration, coverage, wav_file, wav_sha256, 1))
+                continue
             pcm, coverage = cut(raw_dir, bursts, start, end - start)
             wav_file = wav_sha256 = None
             if coverage > 0:
@@ -168,15 +178,16 @@ def assemble(raw_dir: Path, db_path: Path, audio_dir: Path) -> dict:
                 wav_sha256, changed = write_wav(audio_dir / wav_file, pcm)
                 written += changed
             zero_at = datetime.fromtimestamp(start, timezone.utc).isoformat()
-            rows.append((conversation_id, zero_at, end - start, coverage, wav_file, wav_sha256))
+            rows.append((conversation_id, zero_at, end - start, coverage, wav_file, wav_sha256, 0))
 
         db.executescript(SCHEMA)
-        db.executemany("INSERT INTO conversation_audio VALUES (?,?,?,?,?,?)", rows)
+        db.executemany("INSERT INTO conversation_audio VALUES (?,?,?,?,?,?,?)", rows)
         db.commit()
     finally:
         db.close()
 
-    return {"conversations": len(rows), "with_audio": sum(1 for r in rows if r[4]), "wavs_written": written}
+    return {"conversations": len(rows), "with_audio": sum(1 for r in rows if r[4]), "wavs_written": written,
+            "sealed": len(sealed)}
 
 
 def remove_stale_wavs(audio_dir: Path, db_path: Path) -> int:

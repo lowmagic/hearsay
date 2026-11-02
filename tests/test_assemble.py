@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from hearsay.assemble import assemble, remove_stale_wavs
 from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
 from hearsay.parse import rebuild
+from hearsay.records import restore
 
 T = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 CHUNK = 32000  # one second of 16 kHz PCM16
@@ -56,6 +57,7 @@ def add_conversations(db_path, rows):
     db.executemany("INSERT INTO conversations VALUES (?,?,?,?,?)", rows)
     db.commit()
     db.close()
+    restore(db_path, None)  # nothing sealed
 
 
 def test_assembles_each_conversation_from_the_stream(tmp_path):

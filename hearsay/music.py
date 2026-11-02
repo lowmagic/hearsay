@@ -106,15 +106,21 @@ def score_music(raw_dir: Path, db_path: Path, model_dir: Path, cache: Cache | No
     db = sqlite3.connect(db_path)
     try:
         turns = db.execute(
-            "SELECT t.turn_id, ca.zero_at, t.start, t.end FROM turns t"
+            "SELECT t.turn_id, ca.zero_at, t.start, t.end, ca.sealed FROM turns t"
             " JOIN conversation_audio ca ON ca.conversation_id = t.conversation_id"
             " WHERE t.end - t.start >= ? ORDER BY t.turn_id",
             (MIN_SECONDS,),
         ).fetchall()
+        # A sealed turn's scores are in its record (hearsay/records.py).
+        sealed = {row[0]: row[1:] for row in db.execute(
+            "SELECT turn_id, speech, singing, music FROM sealed_turns WHERE speech IS NOT NULL")}
         bursts = place_bursts(db)
-        model = load_model(model_dir) if turns else None
+        model = load_model(model_dir) if any(not t[4] for t in turns) else None
         rows = []
-        for turn_id, zero_at, start, end in turns:
+        for turn_id, zero_at, start, end, is_sealed in turns:
+            if is_sealed:
+                rows += [(turn_id, *sealed[turn_id])] if turn_id in sealed else []
+                continue
             pcm, coverage = cut(raw_dir, bursts, timestamp(zero_at) + start, min(end - start, MAX_SECONDS))
             if coverage >= MIN_COVERAGE:
                 rows.append((turn_id, *(round(v, 3) for v in score(model, pcm, cache))))

@@ -26,6 +26,7 @@ import sqlite3
 from pathlib import Path
 
 from hearsay.speakers import MIN_TURN
+from hearsay.turns import transcript_for
 
 # A gap between words this long is a pause.
 PAUSE = 0.25
@@ -110,7 +111,7 @@ def measure_delivery(db_path: Path, transcripts_dir: Path) -> dict:
     db = sqlite3.connect(db_path)
     try:
         turns = db.execute(
-            "SELECT t.turn_id, t.conversation_id, t.start, t.end, t.text, ca.wav_sha256 FROM turns t"
+            "SELECT t.turn_id, t.conversation_id, t.start, t.end, t.text FROM turns t"
             " JOIN turn_speakers ts ON ts.turn_id = t.turn_id"
             " JOIN conversation_audio ca ON ca.conversation_id = t.conversation_id"
             " WHERE ts.label = 'owner' AND ts.basis IN ('voice', 'channel') AND t.end - t.start >= ?"
@@ -119,12 +120,12 @@ def measure_delivery(db_path: Path, transcripts_dir: Path) -> dict:
         ).fetchall()
         delivery, stutter_rows = [], []
         words, loaded = [], None
-        for turn_id, conversation_id, start, end, text, wav_sha256 in turns:
+        for turn_id, conversation_id, start, end, text in turns:
             if conversation_id != loaded:
                 # The transcript the turns were built from (hearsay/turns.py). If the
                 # dev box replaced it since, this conversation waits a run.
-                transcript = json.loads((transcripts_dir / f"{conversation_id}.json").read_text())
-                words = [] if transcript["wav_sha256"] != wav_sha256 else sorted(
+                transcript = transcript_for(db, transcripts_dir, conversation_id)
+                words = [] if transcript is None else sorted(
                     (w["start"], w["end"], w["word"]) for s in transcript["segments"] for w in s.get("words", []) if "start" in w)
                 loaded = conversation_id
             # A turn is consecutive words of one speaker (split_turns), so these are its words.

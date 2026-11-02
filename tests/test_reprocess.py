@@ -6,10 +6,10 @@ from hearsay import reprocess
 
 
 def test_a_failed_run_leaves_the_previous_database_in_place(tmp_path, monkeypatch):
-    dirs = {name: tmp_path / name for name in ("raw", "audio", "labels", "models", "transcripts", "imports", "stream")}
-    for d in dirs.values():
+    env = {name: tmp_path / name for name in reprocess.DIRS if name != "db"}
+    for d in env.values():
         d.mkdir()
-    db_path = tmp_path / "hearsay.sqlite"
+    db_path = env["db"] = tmp_path / "hearsay.sqlite"
     db_path.write_bytes(b"the database readers are using")
 
     def fail(*args, **kwargs):
@@ -17,8 +17,7 @@ def test_a_failed_run_leaves_the_previous_database_in_place(tmp_path, monkeypatc
 
     monkeypatch.setattr(reprocess, "find_conversations", fail)
     with pytest.raises(RuntimeError):
-        reprocess.run(dirs["raw"], db_path, dirs["audio"], dirs["labels"], dirs["models"],
-                      dirs["transcripts"], dirs["imports"], dirs["stream"], dirs["models"], dirs["models"])
+        reprocess.run(env)
 
     assert db_path.read_bytes() == b"the database readers are using"
 

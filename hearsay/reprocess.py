@@ -15,6 +15,9 @@ NAS keeps snapshots, so every rewritten byte is kept many times). A schema
 change replaces the changed table inside the same transaction. Deleting
 the database is always safe: the next run fills a new one from raw.
 
+Conversations that settled a week ago are sealed at the end of a run
+(hearsay/records.py), and later runs take them from their records without
+reading their audio, so a run with nothing new reads only the last week's.
 Slow steps (voice detection, speaker embeddings, the audio models) are cached
 by audio content next to the database. A run waits for any other to finish
 (one corral starts and one started by hand would otherwise overlap and break
@@ -27,6 +30,7 @@ import sqlite3
 import sys
 import tempfile
 from collections import Counter
+from contextlib import contextmanager
 from pathlib import Path
 
 from hearsay import conversations, speakers
@@ -43,6 +47,7 @@ from hearsay.parse import ParseFailed, rebuild
 from hearsay.affect import score_affect
 from hearsay.delivery import measure_delivery
 from hearsay.places import find_places
+from hearsay.records import late, restore, seal, sealed_payloads, unseal
 from hearsay.speakers import label_speakers
 from hearsay.stream import write_stream
 from hearsay.turns import build_turns, record_operator_input
@@ -54,41 +59,64 @@ def report(title: str, counts: dict) -> None:
         print(f"  {name}: {n}")
 
 
-def run(raw_dir: Path, db_path: Path, audio_dir: Path, labels_dir: Path, model_dir: Path,
-        transcripts_dir: Path, imports_dir: Path, stream_dir: Path, affect_model_dir: Path,
-        music_model_dir: Path) -> None:
-    lock = open(db_path.with_name("reprocess.lock"), "w")
-    fcntl.flock(lock, fcntl.LOCK_EX)
-    scratch = tempfile.TemporaryDirectory(prefix="hearsay-reprocess-")
-    staging = Path(scratch.name) / db_path.name
-    cache = Cache(db_path.parent / "cache.sqlite")
+DIRS = ("raw_dir", "db", "audio_dir", "labels_dir", "model_dir", "transcripts_dir", "imports_dir", "stream_dir",
+        "affect_model_dir", "music_model_dir", "records_dir")
+
+
+@contextmanager
+def lock(db_path: Path):
+    """One run at a time: one corral starts and one started by hand would otherwise break each other."""
+    with open(db_path.with_name("reprocess.lock"), "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        yield
+
+
+def build(env: dict[str, Path], staging: Path, records_dir: Path | None, unseal_late: bool = False) -> None:
+    """Build a complete database at staging: from records behind the seal line
+    (hearsay/records.py), or with records_dir None all from raw."""
+    cache = Cache(env["db"].parent / "cache.sqlite")
     try:
-        report(f"Rebuilt from {raw_dir}:", rebuild(raw_dir, staging))
+        sealed, imports = sealed_payloads(records_dir)
+        report(f"Rebuilt from {env['raw_dir']}:", rebuild(env["raw_dir"], staging, sealed))
+        if unseal_late and records_dir and (when := late(staging, records_dir, env["imports_dir"])) is not None:
+            # Audio arrived behind the line: redo from just before it.
+            report("Audio arrived behind the seal line; unsealed:", unseal(records_dir, when))
+            sealed, imports = sealed_payloads(records_dir)
+            report(f"Rebuilt from {env['raw_dir']}:", rebuild(env["raw_dir"], staging, sealed))
+        report("Sealed conversations, from their records:", restore(staging, records_dir))
         # Decoded imports are derived, so they're cached next to the database.
-        report(f"Imported audio from {imports_dir}:",
-               load_imports(imports_dir, staging, db_path.parent / "imports-pcm"))
-        report("Audio from the recorder:", load_captures(raw_dir, staging, db_path.parent / "capture-pcm"))
-        report("Conversations found in the audio stream:", find_conversations(raw_dir, staging, cache))
-        report("Where conversations happened:", find_places(staging, labels_dir))
-        report(f"Assembled conversation audio in {audio_dir}:", assemble(raw_dir, staging, audio_dir))
-        report(f"Turns from transcripts in {transcripts_dir}:", build_turns(staging, transcripts_dir))
+        report(f"Imported audio from {env['imports_dir']}:",
+               load_imports(env["imports_dir"], staging, env["db"].parent / "imports-pcm", imports))
+        report("Audio from the recorder:", load_captures(env["raw_dir"], staging, env["db"].parent / "capture-pcm"))
+        report("Conversations found in the audio stream:", find_conversations(env["raw_dir"], staging, cache))
+        report("Where conversations happened:", find_places(staging, env["labels_dir"]))
+        report(f"Assembled conversation audio in {env['audio_dir']}:", assemble(env["raw_dir"], staging, env["audio_dir"]))
+        report(f"Turns from transcripts in {env['transcripts_dir']}:", build_turns(staging, env["transcripts_dir"]))
         # Before anything else reads turns, so thrown-out ones count for nothing.
-        report("Stretches the operator threw out:", forget(staging, labels_dir))
-        report("Conversations the operator released early:", record_releases(staging, labels_dir))
-        report("Operator labels and tags, matched to turns:", record_operator_input(staging, labels_dir))
-        report("Speaker embeddings and labels:", label_speakers(raw_dir, staging, labels_dir, model_dir, cache))
+        report("Stretches the operator threw out:", forget(staging, env["labels_dir"]))
+        report("Conversations the operator released early:", record_releases(staging, env["labels_dir"]))
+        report("Operator labels and tags, matched to turns:", record_operator_input(staging, env["labels_dir"]))
+        report("Speaker embeddings and labels:",
+               label_speakers(env["raw_dir"], staging, env["labels_dir"], env["model_dir"], cache))
         report("Turns that sound like tagged media:", score_media(staging))
-        report("Turns that sound like songs:", score_music(raw_dir, staging, music_model_dir, cache))
-        report("The owner's tone of voice:", score_affect(raw_dir, staging, affect_model_dir, cache))
-        report("How the owner delivered their turns:", measure_delivery(staging, transcripts_dir))
+        report("Turns that sound like songs:", score_music(env["raw_dir"], staging, env["music_model_dir"], cache))
+        report("The owner's tone of voice:", score_affect(env["raw_dir"], staging, env["affect_model_dir"], cache))
+        report("How the owner delivered their turns:", measure_delivery(staging, env["transcripts_dir"]))
         record_run(staging)
-        report(f"Updated {db_path} in place:", update_in_place(staging, db_path))
     finally:
         cache.close()
-        scratch.cleanup()
-    # From the database now in place, so the stream always matches it.
-    report(f"Utterance stream in {stream_dir}:", write_stream(db_path, stream_dir))
-    print(f"Removed {remove_stale_wavs(audio_dir, db_path)} stale WAV(s).")
+
+
+def run(env: dict[str, Path]) -> None:
+    with lock(env["db"]), tempfile.TemporaryDirectory(prefix="hearsay-reprocess-") as scratch:
+        staging = Path(scratch) / env["db"].name
+        build(env, staging, env["records_dir"], unseal_late=True)
+        report(f"Updated {env['db']} in place:", update_in_place(staging, env["db"]))
+        # From the database now in place, so the stream always matches it.
+        report(f"Utterance stream in {env['stream_dir']}:", write_stream(env["db"], env["stream_dir"]))
+        print(f"Removed {remove_stale_wavs(env['audio_dir'], env['db'])} stale WAV(s).")
+        report(f"Sealed in {env['records_dir']}:",
+               seal(env["db"], env["records_dir"], env["transcripts_dir"], env["labels_dir"]))
 
 
 def schema(db: sqlite3.Connection, name: str) -> dict[str, tuple[str, str]]:
@@ -170,13 +198,9 @@ def record_run(db_path: Path) -> None:
 
 
 def main() -> None:
-    env = {name: Path(os.environ[f"HEARSAY_{name.upper()}"]) for name in
-           ("raw_dir", "db", "audio_dir", "labels_dir", "model_dir", "transcripts_dir", "imports_dir",
-            "stream_dir", "affect_model_dir", "music_model_dir")}
+    env = {name: Path(os.environ[f"HEARSAY_{name.upper()}"]) for name in DIRS}
     try:
-        run(env["raw_dir"], env["db"], env["audio_dir"], env["labels_dir"], env["model_dir"],
-            env["transcripts_dir"], env["imports_dir"], env["stream_dir"], env["affect_model_dir"],
-            env["music_model_dir"])
+        run(env)
     except ParseFailed as e:
         print(e, file=sys.stderr)
         print(f"{env['db']} and {env['audio_dir']} left unchanged.", file=sys.stderr)
