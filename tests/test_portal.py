@@ -24,8 +24,11 @@ from hearsay.turns import SCHEMA as TURNS_SCHEMA, record_operator_input  # noqa:
 
 
 @pytest.fixture
-def portal(tmp_path):
-    """Eight 4 s turns in one conversation WAV: Hearsay couldn't tell who said the a turns, the b turns aren't the owner."""
+def portal(tmp_path, monkeypatch):
+    """Eight 4 s turns in one conversation WAV: Hearsay couldn't tell who said the a turns, the b turns aren't the owner.
+    The portal shows its host's time zone, here UTC."""
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
     db_path, audio_dir, labels_dir = tmp_path / "h.sqlite", tmp_path / "audio", tmp_path / "labels"
     audio_dir.mkdir()
     labels_dir.mkdir()
@@ -166,8 +169,8 @@ def test_each_clip_shows_its_words_and_when_and_where_it_was_said(portal):
 
     page = client.get("/").text
     assert "Pass the &lt;salt&gt;" in page
-    assert "4.0 s · Jan 1 00:00 UTC · Blind Monk" in page  # a0, at 0 s
-    assert "Jan 1 00:00 UTC · Home" in page  # a4, at 20 s
+    assert "4.0 s · Jan 1 00:00 · Blind Monk" in page  # a0, at 0 s
+    assert "Jan 1 00:00 · Home" in page  # a4, at 20 s
 
 
 def test_conversations_narrow_to_a_place_and_to_words_said_and_read_in_order(portal):
@@ -201,10 +204,10 @@ def test_conversations_narrow_to_a_place_and_to_words_said_and_read_in_order(por
     assert listed(q="pass THE") == ["c1", "c2"]
     assert listed(q="salt", place="Home") == ["c1"] and listed(q="salt", place="Nowhere") == []
     found = client.get("/conversations", params={"q": "SALT"}).text
-    assert "<a href='/conversations/c1?q=SALT#t2'>Pass the &lt;<mark>salt</mark>&gt;</a>" in found
+    assert "<a href='/conversations/c1?q=SALT#c1-2'>Pass the &lt;<mark>salt</mark>&gt;</a>" in found
 
     page = client.get("/conversations/c1", params={"q": "salt"}).text
-    turns = [page.index(f"id='t{idx}'") for idx in range(8)]
+    turns = [page.index(f"id='c1-{idx}'") for idx in range(8)]
     assert turns == sorted(turns)  # in the order said
     assert page.index("At Home") < turns[0] < turns[3] < page.index("At Back Room") < turns[4]
     assert "<a class='at' href='/audio/a0'>00:00:00</a> <span class='muted'>Not sure</span>" in page
@@ -272,6 +275,39 @@ def test_turns_that_sound_like_tagged_media_are_offered_unless_the_owner_s_by_vo
 
     client.post("/turn", data={"turn_id": "b1", "category": "_media"})
     assert "/audio/b1" not in client.get("/").text
+
+
+def test_a_day_reads_its_conversations_through_in_order_by_the_host_s_clock(portal, monkeypatch):
+    from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
+
+    client, db_path, labels_dir = portal
+    monkeypatch.setenv("TZ", "America/New_York")
+    time.tzset()
+    log_in(client)
+    db = sqlite3.connect(db_path)
+    db.executescript(CONVERSATIONS_SCHEMA)
+    # 7 pm, 9 pm and 1 am in New York: the first two on Dec 31, though all three are Jan 1 in UTC.
+    db.execute("INSERT INTO conversations VALUES ('c1', 1767225600, 1767225640, 32, 0)")
+    db.execute("INSERT INTO conversations VALUES ('c2', 1767232800, 1767232810, 2, 0)")
+    db.execute("INSERT INTO conversations VALUES ('c3', 1767247200, 1767247210, 2, 0)")
+    for c in ("c2", "c3"):
+        db.execute("INSERT INTO conversation_audio VALUES (?, '2026-01-01T00:00:00+00:00', 10, 1, NULL, NULL)", (c,))
+    db.commit()
+    db.close()
+
+    page = client.get("/day/2025-12-31").text
+    assert "<h1>Wednesday December 31</h1>" in page and '<section id="c3">' not in page
+    assert page.index('<section id="c1">') < page.index("1 h 59 min quiet") < page.index('<section id="c2">')
+    assert ">19:00:00</a>" in page and "<a href='/day/2026-01-01'>Thu Jan 1 →</a>" in page and "←" not in page.split("<h1>")[1]
+    assert "<a href='/day/2025-12-31'>Wed Dec 31</a>" in client.get("/conversations").text
+    assert client.get("/day/not-a-day").status_code == 404
+
+    # Acting on a day's page comes back to it.
+    thrown = client.post("/forget", data={"conversation_id": "c2", "action": "whole", "back": "/day/2025-12-31#c2"},
+                         follow_redirects=False)
+    assert thrown.headers["location"] == "/day/2025-12-31#c2" and (labels_dir / "forget.jsonl").exists()
+    elsewhere = client.post("/release", data={"conversation_id": "c2", "back": "//evil.example"}, follow_redirects=False)
+    assert elsewhere.headers["location"] == "/conversations/c2"
 
 
 def test_a_stretch_thrown_out_leaves_the_stream_and_is_final_once_a_reprocess_applies_it(portal):

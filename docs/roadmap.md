@@ -540,7 +540,7 @@ Comes before 19 and 12: it needs neither, and it is the only way to keep
 something from Claude until then.
 
 The conversation page and its list come first, read-only (`/conversations`
-in the portal): reading and hearing new capture on them is also how slice
+in the portal, and a day's conversations read through in order at `/day`): reading and hearing new capture on them is also how slice
 22's done-when is checked. Throwing out came next (`hearsay/forget.py`):
 a stretch from the first turn checked to the last, or the whole
 conversation, leaves on the next reprocess; every turn it overlaps at all

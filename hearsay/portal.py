@@ -20,13 +20,18 @@ survives re-transcription, and applies to that turn whatever its voice said
 (hearsay.turns.categories). Delete throws the turn out, as a conversation's
 page does (below): Noise keeps its words in Hearsay, Delete doesn't.
 
-The Conversations page lists every conversation, newest first, narrowed to
+Times are the NAS's own time zone, the operator's.
+
+The Conversations page lists every conversation, newest first, by day,
+narrowed to
 a named place or to those whose words contain a search, and opens each as
 its transcript in order: every turn with when, where and who the stream
 says said it (or why it's left out), and the conversation's audio, which
 plays from any turn on. Each says whether it's in the stream yet, read from
 the stream's index, or held, and until when (hearsay/hold.py); the operator
-can release an ended one early (labels/release.jsonl). It reads what the last reprocess wrote; the
+can release an ended one early (labels/release.jsonl). A day's page reads
+its conversations through in order, with the quiet between them, each just
+as on its own page. It reads what the last reprocess wrote; the
 transcript is the first part of roadmap slice 20.
 
 On a conversation's page the operator throws out a stretch, from the first
@@ -52,7 +57,7 @@ import re
 import sqlite3
 import time
 import wave
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote
 
@@ -164,6 +169,10 @@ textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 0.6rem; 
 .forget .row button { font-size: 0.85em; padding: 0.5rem; }
 mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; }
 .release button { margin-top: 0; }
+section { margin-bottom: 2rem; }
+section h2 { margin-bottom: 0.2rem; }
+.quiet { color: var(--muted); text-align: center; border-top: 1px dashed var(--line); padding-top: 0.5rem; }
+.nav { margin: 0.5rem 0; }
 """
 
 # Tags a clip without leaving the page, and collapses it to an Undo button that
@@ -197,12 +206,14 @@ document.addEventListener('submit', async event => {
 
 # Plays the conversation from a turn's time, and marks the turn being heard.
 # Without scripts a turn's time links to its own clip.
+TRANSCRIPT_HELP = "Tap a time to play from there. To throw out a stretch, check its first and last turns."
+
+# Each conversation has its own player, and one playing stops the others.
 TRANSCRIPT_SCRIPT = """
-const player = document.getElementById('player');
-const turns = [...document.querySelectorAll('li[data-start]')];
 document.addEventListener('click', event => {
   const link = event.target.closest('a.at');
-  if (!link || !player) return;
+  const player = link?.closest('section').querySelector('audio');
+  if (!player) return;
   event.preventDefault();
   const seconds = parseFloat(link.closest('li').dataset.start);
   if (player.readyState) player.currentTime = seconds;
@@ -214,10 +225,14 @@ document.addEventListener('submit', event => {
                release: 'Release this conversation? Idea Machine gets it at the next reprocess.'}[event.submitter?.value];
   if (ask && !confirm(ask)) event.preventDefault();
 });
-player?.addEventListener('timeupdate', () => {
-  let now = null;
-  for (const turn of turns) { if (parseFloat(turn.dataset.start) <= player.currentTime) now = turn; else break; }
-  turns.forEach(turn => turn.classList.toggle('now', turn === now));
+document.querySelectorAll('section audio').forEach(player => {
+  const turns = [...player.closest('section').querySelectorAll('li[data-start]')];
+  player.addEventListener('play', () => document.querySelectorAll('audio').forEach(a => { if (a !== player) a.pause(); }));
+  player.addEventListener('timeupdate', () => {
+    let now = null;
+    for (const turn of turns) { if (parseFloat(turn.dataset.start) <= player.currentTime) now = turn; else break; }
+    turns.forEach(turn => turn.classList.toggle('now', turn === now));
+  });
 });
 """
 
@@ -277,7 +292,7 @@ CATEGORY_ROWS = (("_me", "_stranger", "_mic"), ("_media", "_music", "_noise"))
 def clip_player(s: dict) -> str:
     """A turn's audio with its words, when and where it was said, and a button per category."""
     words = s["text"] if len(s["text"]) <= CLIP_CHARACTERS else s["text"][:CLIP_CHARACTERS].rsplit(" ", 1)[0] + " …"
-    said = [f"{s['end'] - s['start']:.1f} s", f"{datetime.fromtimestamp(s['at'], timezone.utc):%b %-d %H:%M} UTC"]
+    said = [f"{s['end'] - s['start']:.1f} s", f"{local(s['at']):%b %-d %H:%M}"]
     said += [s["place"]] if s["place"] else []
     people, other = ("".join(f"<button type='submit' name='category' value='{value}'>{CATEGORIES[value]}</button>"
                              for value in row) for row in CATEGORY_ROWS)
@@ -305,6 +320,16 @@ def conversation_places(db: sqlite3.Connection) -> dict[str, list[tuple[str, flo
             "SELECT conversation_id, place, start, end FROM conversation_places ORDER BY start"):
         places.setdefault(conversation_id, []).append((place, start, end))
     return places
+
+
+def local(at: float) -> datetime:
+    """A moment in the NAS's own time zone, the operator's (install/compose.yaml)."""
+    return datetime.fromtimestamp(at).astimezone()
+
+
+def quiet(seconds: float) -> str:
+    hours, minutes = divmod(round(seconds / 60), 60)
+    return f"{f'{hours} h ' if hours else ''}{minutes} min quiet"
 
 
 def whole_seconds(start: float, end: float) -> list[str]:
@@ -418,7 +443,7 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Pat
         releases = read_releases(labels_dir)
         if not held(start, end, releases, time.time()):
             return ("released" if end + HOLD > time.time() else "two weeks up") + ": out at the next reprocess", False
-        return f"held until {datetime.fromtimestamp(end + HOLD, timezone.utc):%a %b %-d}", not is_open
+        return f"held until {local(end + HOLD):%a %b %-d}", not is_open
 
     def append_tag(record: dict, path: Path = tags_path) -> None:
         record["tagged_at"] = datetime.now(timezone.utc).isoformat()
@@ -489,11 +514,12 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Pat
 <h1>Sounds like TV</h1>
 <p class="muted">{len(media)} turn(s) that sound like what you've tagged Media, latest first.</p>
 <ul>{media_players}</ul>""" if media else ""
-        return page("Hearsay", f"""{media_section}
+        return page("Hearsay", f"""
+<p class="nav"><a href="/day">Today</a> · <a href="/conversations">Conversations</a> · <a href="/places">Places</a> ·
+<a href="/words">Words</a></p>{media_section}
 <h1>Not sure who spoke</h1>
 <p class="muted">{len(unsure)} turn(s) Hearsay couldn't tell were you or not, latest first.
-Tag each; it applies at the next reprocess. · <a href="/conversations">Conversations</a> ·
-<a href="/places">Places</a> · <a href="/words">Words</a></p>
+Tag each; it applies at the next reprocess.</p>
 <ul>{players or "<li class='muted'>Nothing to check.</li>"}</ul>
 <h2>Transcription</h2><ul><li><a href="/words">Words <span class="muted">· {len(boosted(read_committed(labels_dir)))} in use
 {"· a draft is waiting" if read_draft(labels_dir) is not None else ""}</span></a></li></ul>
@@ -577,7 +603,7 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
         finally:
             db.close()
 
-        items, sent = [], published(stream_dir)
+        items, sent, last_day = [], published(stream_dir), None
         for conversation_id, start, end, is_open in conversations:
             here = places.get(conversation_id, [])
             if place and place not in {name for name, _, _ in here}:
@@ -591,10 +617,13 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
             facts = [f"{(end - start) / 60:.0f} min", *names, f"{len(said)} turn(s)"] + (["still going"] if is_open else [])
             facts += ["some thrown out"] if conversation_id in thrown_out else []
             facts.append(hold_status(start, end, is_open, sent, conversation_id)[0])
-            shown = "".join(f"<li><a href='{url}#t{idx}'>{marked(text, query)}</a></li>"
+            shown = "".join(f"<li><a href='{url}#{quote(conversation_id)}-{idx}'>{marked(text, query)}</a></li>"
                             for idx, text in matches[:MATCHES_SHOWN])
             more = f"<div class='muted'>and {len(matches) - MATCHES_SHOWN} more</div>" if len(matches) > MATCHES_SHOWN else ""
-            items.append(f"<li><a href='{url}'><strong>{datetime.fromtimestamp(start, timezone.utc):%a %b %-d %H:%M} UTC"
+            if local(start).date() != last_day:
+                last_day = local(start).date()
+                items.append(f"<li class='place'><a href='/day/{last_day}'>{last_day:%a %b %-d}</a></li>")
+            items.append(f"<li><a href='{url}'><strong>{local(start):%H:%M}"
                          f"</strong> <span class='muted'>{html.escape(' · '.join(facts))}</span></a>"
                          f"{f'<ul>{shown}</ul>{more}' if shown else ''}</li>")
         options = "".join(f"<option{' selected' if name == place else ''}>{html.escape(name)}</option>"
@@ -607,43 +636,37 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
   <input name="q" type="search" value="{html.escape(query)}" placeholder="Words said" aria-label="Words said">
   <button type="submit">Find</button>
 </form>
-<p class="muted">{len(items)} of {len(conversations)} conversation(s), newest first, as of the last reprocess.</p>
+<p class="muted">{sum(1 for i in items if not i.startswith("<li class='place'>"))} of {len(conversations)}
+conversation(s), newest first, as of the last reprocess. Tap a day to read it through.</p>
 <ul>{"".join(items) or "<li class='muted'>None.</li>"}</ul>""")
 
-    @app.get("/conversations/{conversation_id}")
-    async def show_conversation(request: Request, conversation_id: str) -> Response:
-        if not logged_in(request):
-            return RedirectResponse("/login", status_code=303)
-        query = " ".join(request.query_params.get("q", "").split())
-        db = connect()
-        try:
-            found = db.execute(
-                "SELECT c.start, c.end, c.open, ca.zero_at, ca.wav_file FROM conversations c"
-                " JOIN conversation_audio ca USING (conversation_id) WHERE conversation_id = ?",
-                (conversation_id,)).fetchone()
-            places = conversation_places(db).get(conversation_id, [])
-            tagged_as = categories(db)
-            turns = db.execute(
-                "SELECT t.turn_id, t.idx, t.start, t.end, t.text, t.diar_speaker, ts.label, ts.basis FROM turns t"
-                " JOIN turn_speakers ts USING (turn_id) WHERE t.conversation_id = ? ORDER BY t.start, t.idx",
-                (conversation_id,)).fetchall()
-            applied = db.execute("SELECT start, end, reason FROM forgotten WHERE conversation_id = ?",
-                                 (conversation_id,)).fetchall()
-        finally:
-            db.close()
+    def transcript(db: sqlite3.Connection, conversation_id: str, query: str, back: str, tagged_as: dict[str, str],
+                   places: dict[str, list[tuple[str, float, float]]], marks: list[dict], sent: set[str]) -> str | None:
+        """One conversation as a section: when, how long and where, whether Idea Machine
+        can see it, its audio, and its turns in order, each to play from or throw out."""
+        found = db.execute(
+            "SELECT c.start, c.end, c.open, ca.zero_at, ca.wav_file FROM conversations c"
+            " JOIN conversation_audio ca USING (conversation_id) WHERE conversation_id = ?",
+            (conversation_id,)).fetchone()
         if found is None:
-            return Response(status_code=404)
+            return None
         start, end, is_open, zero_at, wav_file = found
         zero = datetime.fromisoformat(zero_at).timestamp()
+        here = places.get(conversation_id, [])
+        turns = db.execute(
+            "SELECT t.turn_id, t.idx, t.start, t.end, t.text, t.diar_speaker, ts.label, ts.basis FROM turns t"
+            " JOIN turn_speakers ts USING (turn_id) WHERE t.conversation_id = ? ORDER BY t.start, t.idx",
+            (conversation_id,)).fetchall()
+        applied = db.execute("SELECT start, end, reason FROM forgotten WHERE conversation_id = ?",
+                             (conversation_id,)).fetchall()
 
         def clock(at: float) -> str:
-            return f"{datetime.fromtimestamp(at, timezone.utc):%H:%M:%S}"
+            return f"{local(at):%H:%M:%S}"
 
         # Stretches thrown out: those a reprocess has applied are final, their
         # turns already gone; the rest can still be taken back.
         done = {(s, e) for s, e, _ in applied}
-        pending = [m for m in read_marks(labels_dir)
-                   if m["start"] < end and m["end"] > start and (m["start"], m["end"]) not in done]
+        pending = [m for m in marks if m["start"] < end and m["end"] > start and (m["start"], m["end"]) not in done]
         notes = sorted(
             [(s, f"<li class='place muted'>Thrown out {clock(s)}–{clock(e)}"
                  f"{html.escape(f' · {reason}') if reason else ''}</li>") for s, e, reason in applied]
@@ -657,7 +680,7 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
             at = zero + turn_start
             while notes and notes[0][0] <= at:
                 lines.append(notes.pop(0)[1])
-            place = place_at(places, at)
+            place = place_at(here, at)
             if place and place != last_place:
                 lines.append(f"<li class='place'>At {html.escape(place)}</li>")
                 last_place = place
@@ -666,30 +689,27 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
             speaker = who(label, tagged_as.get(turn_id), basis, voices.get(voice))
             going = any(m["start"] < zero + turn_end and at < m["end"] for m in pending)
             lines.append(
-                f"<li id='t{idx}' class='turn{' left' if going or speaker.startswith('Left out') else ''}'"
+                f"<li id='{html.escape(conversation_id)}-{idx}' class='turn{' left' if going or speaker.startswith('Left out') else ''}'"
                 f" data-start='{turn_start:.2f}'><input type='checkbox' name='turn_id' value='{html.escape(turn_id)}'"
                 f" aria-label='Choose'><a class='at' href='/audio/{quote(turn_id)}'>{clock(at)}</a> "
                 f"<span class='muted'>{html.escape(speaker)}</span><div>{marked(text, query)}</div></li>")
         lines += [note for _, note in notes]
-        player = (f"<div class='player'><audio id='player' controls preload='none'"
+        player = (f"<div class='player'><audio controls preload='none'"
                   f" src='/conversations/{quote(conversation_id)}/audio'></audio></div>" if wav_file else
                   "<p class='muted'>No audio.</p>")
-        names = list(dict.fromkeys(name for name, _, _ in places))
+        names = list(dict.fromkeys(name for name, _, _ in here))
         facts = [f"{(end - start) / 60:.0f} min", *names, f"{len(turns)} turn(s)"] + (["still going"] if is_open else [])
-        status, releasable = hold_status(start, end, is_open, published(stream_dir), conversation_id)
-        release = (f"<form class='release' method='post' action='/release'>"
-                   f"<input type='hidden' name='conversation_id' value='{html.escape(conversation_id)}'>"
+        status, releasable = hold_status(start, end, is_open, sent, conversation_id)
+        hidden = (f"<input type='hidden' name='conversation_id' value='{html.escape(conversation_id)}'>"
+                  f"<input type='hidden' name='back' value='{html.escape(back)}'>")
+        release = (f"<form class='release' method='post' action='/release'>{hidden}"
                    "<button type='submit' name='action' value='release'>Release to Idea Machine now</button></form>"
                    if releasable else "")
-        return page("Hearsay conversation", f"""
-<p><a href="/conversations">← Conversations</a></p>
-<h1>{datetime.fromtimestamp(start, timezone.utc):%a %b %-d %H:%M} UTC</h1>
+        return f"""<section id="{html.escape(conversation_id)}">
+<h2><a href="/conversations/{quote(conversation_id)}">{local(start):%a %b %-d %H:%M}</a></h2>
 <p class="muted">{html.escape(' · '.join(facts))}. Idea Machine: {html.escape(status)}.</p>
-{release}
-<p class="muted">Tap a time to play from there. To throw out a stretch, check its first and last turns.</p>
-{player}
-<form method="post" action="/forget">
-<input type="hidden" name="conversation_id" value="{html.escape(conversation_id)}">
+{release}{player}
+<form method="post" action="/forget">{hidden}
 <ul>{"".join(lines) or "<li class='muted'>Not transcribed yet.</li>"}</ul>
 <div class="forget">
   <input name="reason" maxlength="{REASON_CHARACTERS}" autocomplete="off"
@@ -698,7 +718,78 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
   <button type="submit" name="action" value="whole">Throw out all</button></div>
 </div>
 </form>
+</section>"""
+
+    @app.get("/conversations/{conversation_id}")
+    async def show_conversation(request: Request, conversation_id: str) -> Response:
+        if not logged_in(request):
+            return RedirectResponse("/login", status_code=303)
+        query = " ".join(request.query_params.get("q", "").split())
+        db = connect()
+        try:
+            section = transcript(db, conversation_id, query, f"/conversations/{quote(conversation_id)}", categories(db),
+                                 conversation_places(db), read_marks(labels_dir), published(stream_dir))
+            [found] = db.execute("SELECT start FROM conversations WHERE conversation_id = ?",
+                                 (conversation_id,)).fetchall() or [(None,)]
+        finally:
+            db.close()
+        if section is None:
+            return Response(status_code=404)
+        return page("Hearsay conversation", f"""
+<p><a href="/conversations">← Conversations</a> · <a href="/day/{local(found[0]):%Y-%m-%d}#{quote(conversation_id)}">Its day</a></p>
+<p class="muted">{TRANSCRIPT_HELP}</p>
+{section}
 <script>{TRANSCRIPT_SCRIPT}</script>""")
+
+    @app.get("/day")
+    @app.get("/day/{day}")
+    async def show_day(request: Request, day: str = "") -> Response:
+        """A day's conversations in order, one after another, with the quiet between them."""
+        if not logged_in(request):
+            return RedirectResponse("/login", status_code=303)
+        try:
+            date = datetime.fromisoformat(day).date() if day else datetime.now().astimezone().date()
+        except ValueError:
+            return Response(status_code=404)
+        first, last = (datetime.combine(d, datetime.min.time()).astimezone().timestamp()
+                       for d in (date, date + timedelta(days=1)))
+        db = connect()
+        try:
+            conversations = db.execute(
+                "SELECT conversation_id, start, end FROM conversations WHERE start >= ? AND start < ? ORDER BY start",
+                (first, last)).fetchall()
+            [(before, after)] = db.execute(
+                "SELECT (SELECT max(start) FROM conversations WHERE start < ?),"
+                " (SELECT min(start) FROM conversations WHERE start >= ?)", (first, last)).fetchall()
+            context = (categories(db), conversation_places(db), read_marks(labels_dir), published(stream_dir))
+            sections, previous_end = [], None
+            for conversation_id, start, end in conversations:
+                if previous_end is not None:
+                    sections.append(f"<p class='quiet'>{quiet(start - previous_end)}</p>")
+                sections.append(transcript(db, conversation_id, "", f"/day/{date}#{quote(conversation_id)}", *context))
+                previous_end = end
+        finally:
+            db.close()
+        # The nearest days with anything recorded.
+        nav = " · ".join(
+            ([f"<a href='/day/{local(before):%Y-%m-%d}'>← {local(before):%a %b %-d}</a>"] if before else [])
+            + ["<a href='/conversations'>Conversations</a>"]
+            + ([f"<a href='/day/{local(after):%Y-%m-%d}'>{local(after):%a %b %-d} →</a>"] if after else []))
+        return page("Hearsay day", f"""
+<p><a href="/">← Hearsay</a></p>
+<h1>{date:%A %B %-d}</h1>
+<p class="nav">{nav}</p>
+<p class="muted">{len(conversations)} conversation(s), in order. {TRANSCRIPT_HELP}</p>
+{"".join(sections) or "<p class='muted'>Nothing recorded.</p>"}
+<p class="nav">{nav}</p>
+<script>{TRANSCRIPT_SCRIPT}</script>""")
+
+    def go_back(form: dict[str, list[str]]) -> Response:
+        """To the page the form was on: a conversation's, or its day's."""
+        back = form.get("back", [""])[0]
+        if not back.startswith("/") or back.startswith("//"):
+            back = f"/conversations/{quote(form.get('conversation_id', [''])[0])}"
+        return RedirectResponse(back, status_code=303)
 
     @app.post("/forget")
     async def throw_out(request: Request) -> Response:
@@ -731,14 +822,15 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
             span = (min(s for s, _ in spans), max(e for _, e in spans))
             append_tag({"type": "forget", "at": [datetime.fromtimestamp(t, timezone.utc).isoformat() for t in span],
                         "reason": reason}, labels_dir / "forget.jsonl")
-        return RedirectResponse(f"/conversations/{quote(conversation_id)}", status_code=303)
+        return go_back(form)
 
     @app.post("/release")
     async def release(request: Request) -> Response:
         """Let a conversation that has ended reach the stream before its two weeks are up."""
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
-        conversation_id = parse_qs((await request.body()).decode()).get("conversation_id", [""])[0]
+        form = parse_qs((await request.body()).decode())
+        conversation_id = form.get("conversation_id", [""])[0]
         db = connect()
         try:
             conversation = db.execute("SELECT start, end, open FROM conversations WHERE conversation_id = ?",
@@ -747,7 +839,7 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
             db.close()
         if conversation and not conversation[2]:
             append_tag({"type": "release", "at": whole_seconds(*conversation[:2])}, labels_dir / "release.jsonl")
-        return RedirectResponse(f"/conversations/{quote(conversation_id)}", status_code=303)
+        return go_back(form)
 
     @app.post("/forget/undo")
     async def take_back(request: Request) -> Response:
@@ -755,11 +847,10 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
         form = parse_qs((await request.body()).decode())
-        conversation_id = form.get("conversation_id", [""])[0]
         at = form.get("at", [""])[0].split("|")
         if len(at) == 2 and not applied(at):
             append_tag({"type": "undo", "at": at}, labels_dir / "forget.jsonl")
-        return RedirectResponse(f"/conversations/{quote(conversation_id)}", status_code=303)
+        return go_back(form)
 
     @app.get("/conversations/{conversation_id}/audio")
     async def conversation_audio(request: Request, conversation_id: str) -> Response:
@@ -813,13 +904,13 @@ Tag each; it applies at the next reprocess. · <a href="/conversations">Conversa
         unnamed = ""
         for spot in unnamed_spots([r[:3] for r in readings if r[3] is None], spots, ignored):
             times = spot["times"]
-            days = sorted({datetime.fromtimestamp(at, timezone.utc).strftime("%b %-d") for at in times})
+            days = sorted({local(at).strftime("%b %-d") for at in times})
             lat, lon = spot["latitude"], spot["longitude"]
             clips = "".join(
                 f"<audio controls preload='none' src='/audio/{quote(turn_id)}'></audio><div class='muted'>"
-                f"{datetime.fromtimestamp(at, timezone.utc):%b %-d %H:%M} UTC · {seconds:.0f} s</div>"
+                f"{local(at):%b %-d %H:%M} · {seconds:.0f} s</div>"
                 for turn_id, _, at, seconds in heard_at_spot(times, reading_times, turns))
-            unnamed += (f"<li>About {len(times)} min on {', '.join(days)} (UTC)"
+            unnamed += (f"<li>About {len(times)} min on {', '.join(days)}"
                         f"<div class='muted'>{maps(lat, lon, 'Unnamed place')}</div>{clips}"
                         f"<form class='clip' method='post' action='/places'>"
                         f"<input type='hidden' name='latitude' value='{lat:.6f}'><input type='hidden' name='longitude' value='{lon:.6f}'>"

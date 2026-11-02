@@ -232,8 +232,11 @@ gone for good. A tag applies to that turn whatever its voice said. The more TV y
 Media, the better the TV list gets. Turns on the TV list leave the stream as Media even untagged; tag one
 Other, Me or Mic to put it back.
 
-The portal's Conversations page lists every conversation, newest first;
-narrow it to a named place, or to the ones whose words contain a search.
+The portal's Conversations page lists every conversation, newest first, by
+day; narrow it to a named place, or to the ones whose words contain a search.
+Tap a day (or Today on the front page) to read it through: its conversations
+in order, with how long it was quiet between them. Times are the NAS's time
+zone, which `nas.sh` hands the portal.
 Idea Machine sees a conversation only two weeks after it ends, and each
 says whether it's in the stream yet or held, and until when. To send one
 sooner, once it has ended, press Release to Idea Machine now on its page.

@@ -32,6 +32,8 @@ services:
       - /mnt/fast/hearsay/labels:/data/labels
       # Only to say which conversations Idea Machine can see.
       - /mnt/fast/hearsay/stream:/data/stream:ro
+      # The NAS's time zone, the operator's, for the times the portal shows.
+      - /etc/localtime:/etc/localtime:ro
       # Idea Machine's vocab folder is mounted by compose.vocab.yaml, which
       # install/nas.sh adds only when the folder exists.
     ports:
