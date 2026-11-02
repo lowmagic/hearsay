@@ -25,15 +25,21 @@ out (hearsay/forget.py) is appended the first time a stream is written with
 it, with the ids it removed. Whatever falls in a listed stretch stays out
 of the stream for good, even if the mark is later taken back: its
 utterances, its taps, and a conversation that lies wholly inside it.
+
+A conversation enters the stream when its hold ends (hearsay/hold.py), and
+once in, it stays: one that left would look to a consumer like speech that
+vanished, so the index this replaces says what's already published.
 """
 
 import hashlib
 import json
 import os
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from hearsay.hold import held
 from hearsay.turns import categories
 
 # Bump on any change to the index or utterance format that would break a consumer.
@@ -180,7 +186,13 @@ def write_if_changed(path: Path, data: bytes) -> None:
     os.replace(tmp, path)
 
 
-def write_stream(db_path: Path, stream_dir: Path) -> dict:
+def published(stream_dir: Path) -> set[str]:
+    """The conversations in the stream as last written."""
+    index = stream_dir / "index.json"
+    return {e["conversation_id"] for e in json.loads(index.read_text())["conversations"]} if index.exists() else set()
+
+
+def write_stream(db_path: Path, stream_dir: Path, now: float | None = None) -> dict:
     db = sqlite3.connect(db_path)
     try:
         found = utterances(db)
@@ -196,20 +208,22 @@ def write_stream(db_path: Path, stream_dir: Path) -> dict:
             places.setdefault(conversation_id, []).append({"name": place, "start": iso(start), "end": iso(end)})
         thrown_out = db.execute(
             "SELECT start, end, marked_at, reason, conversation_id, turn_ids FROM forgotten ORDER BY start").fetchall()
+        releases = db.execute("SELECT start, end FROM releases").fetchall()
     finally:
         db.close()
 
     stream_dir.mkdir(parents=True, exist_ok=True)
     forgotten_path = stream_dir / "forgotten.json"
     forgotten = json.loads(forgotten_path.read_text()) if forgotten_path.exists() else []
-    listed = {(f["start"], f["end"]) for f in forgotten}
+    listed, known = {(f["start"], f["end"]) for f in forgotten}, len(forgotten)
     for start, end, marked_at, reason, conversation_id, turn_ids in thrown_out:
         if (iso(start), iso(end)) not in listed:
             forgotten.append({"forgotten_at": marked_at, "start": iso(start), "end": iso(end),
                               "conversation_id": conversation_id, "utterance_ids": json.loads(turn_ids),
                               "reason": reason})
             listed.add((iso(start), iso(end)))
-    write_if_changed(forgotten_path, json.dumps(forgotten, indent=2, ensure_ascii=False).encode() + b"\n")
+    if len(forgotten) > known or not forgotten_path.exists():
+        write_if_changed(forgotten_path, json.dumps(forgotten, indent=2, ensure_ascii=False).encode() + b"\n")
     gone = [(datetime.fromisoformat(s).timestamp(), datetime.fromisoformat(e).timestamp()) for s, e in listed]
     for conversation_id in found:
         found[conversation_id] = [u for u in found[conversation_id] if not overlaps(
@@ -217,9 +231,14 @@ def write_stream(db_path: Path, stream_dir: Path) -> dict:
 
     conversation_dir = stream_dir / "conversations"
     conversation_dir.mkdir(parents=True, exist_ok=True)
-    index = []
+    already = published(stream_dir)
+    now = time.time() if now is None else now
+    index, holding = [], 0
     for conversation_id, start, end, is_open in conversations:
         if within(gone, start, end):
+            continue
+        if conversation_id not in already and held(start, end, releases, now):
+            holding += 1
             continue
         entry = {"conversation_id": conversation_id, "start": iso(start), "end": iso(end),
                  "open": bool(is_open), "transcribed": conversation_id in found,
@@ -240,4 +259,4 @@ def write_stream(db_path: Path, stream_dir: Path) -> dict:
         if f"conversations/{path.name}" not in current:
             path.unlink()
     return {"conversations": len(index), "transcribed": len(current),
-            "utterances": sum(e["utterances"] for e in index)}
+            "utterances": sum(e["utterances"] for e in index), "held": holding}

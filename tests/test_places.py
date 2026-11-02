@@ -7,6 +7,7 @@ from hearsay.affect import SCHEMA as AFFECT_SCHEMA
 from hearsay.assemble import SCHEMA as ASSEMBLE_SCHEMA
 from hearsay.delivery import SCHEMA as DELIVERY_SCHEMA
 from hearsay.forget import SCHEMA as FORGET_SCHEMA
+from hearsay.hold import SCHEMA as HOLD_SCHEMA
 from hearsay.media import SCHEMA as MEDIA_SCHEMA
 from hearsay.music import SCHEMA as MUSIC_SCHEMA
 from hearsay.capture import ACTIVITY, LOCATION, MOVEMENT, ROUTE
@@ -39,7 +40,7 @@ def test_a_conversation_lists_the_named_places_it_happened_at(tmp_path):
     rebuild(raw, db_path)
     db = sqlite3.connect(db_path)
     db.executescript(ASSEMBLE_SCHEMA + CONVERSATIONS_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA
-                     + MUSIC_SCHEMA + MEDIA_SCHEMA + FORGET_SCHEMA)
+                     + MUSIC_SCHEMA + MEDIA_SCHEMA + FORGET_SCHEMA + HOLD_SCHEMA)
     db.execute("INSERT INTO conversations VALUES ('c1', ?, ?, 600, 0)", (t0, t0 + 1200))
     db.execute("INSERT INTO conversations VALUES ('c2', ?, ?, 60, 0)", (t0 + 7200, t0 + 7300))  # no readings
     db.commit()
@@ -77,7 +78,7 @@ def test_staying_put_keeps_the_place_without_fresh_fixes(tmp_path):
     rebuild(raw, db_path)
     db = sqlite3.connect(db_path)
     db.executescript(ASSEMBLE_SCHEMA + CONVERSATIONS_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA
-                     + MUSIC_SCHEMA + MEDIA_SCHEMA + FORGET_SCHEMA)
+                     + MUSIC_SCHEMA + MEDIA_SCHEMA + FORGET_SCHEMA + HOLD_SCHEMA)
     db.execute("INSERT INTO conversations VALUES ('c1', ?, ?, 600, 0)", (t0 + 7200, t0 + 7800))  # two hours in
     db.commit()
     db.close()

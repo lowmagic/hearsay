@@ -234,6 +234,9 @@ Other, Me or Mic to put it back.
 
 The portal's Conversations page lists every conversation, newest first;
 narrow it to a named place, or to the ones whose words contain a search.
+Idea Machine sees a conversation only two weeks after it ends, and each
+says whether it's in the stream yet or held, and until when. To send one
+sooner, once it has ended, press Release to Idea Machine now on its page.
 Each opens as its transcript in order, with who the stream says said each
 turn (or why it's left out) and where; tap a turn's time to play the
 conversation from there. To throw out a stretch, check its first and last

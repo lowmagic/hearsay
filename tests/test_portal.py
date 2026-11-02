@@ -3,6 +3,7 @@ import io
 import json
 import re
 import sqlite3
+import time
 import wave
 
 import pytest
@@ -12,6 +13,7 @@ pytest.importorskip("numpy")
 
 from hearsay.assemble import SCHEMA as ASSEMBLE_SCHEMA  # noqa: E402
 from hearsay.forget import SCHEMA as FORGET_SCHEMA  # noqa: E402
+from hearsay.hold import SCHEMA as HOLD_SCHEMA  # noqa: E402
 from hearsay.media import SCHEMA as MEDIA_SCHEMA  # noqa: E402
 from hearsay.music import SCHEMA as MUSIC_SCHEMA  # noqa: E402
 from hearsay.parse import SCHEMA as PARSE_SCHEMA  # noqa: E402
@@ -36,7 +38,7 @@ def portal(tmp_path):
 
     db = sqlite3.connect(db_path)
     db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + PLACES_SCHEMA + MEDIA_SCHEMA
-                    + MUSIC_SCHEMA + FORGET_SCHEMA)
+                    + MUSIC_SCHEMA + FORGET_SCHEMA + HOLD_SCHEMA)
     db.execute("INSERT INTO conversation_audio VALUES ('c1', '2026-01-01T00:00:00+00:00', 40, 1, 'c1.wav', 'sha')")
     for idx in range(8):
         turn_id = f"{'ab'[idx % 2]}{idx}"
@@ -49,7 +51,7 @@ def portal(tmp_path):
     db.close()
     record_operator_input(db_path, labels_dir)
 
-    app = create_app(db_path, audio_dir, labels_dir, "me", "correct horse", "k" * 64, app_token="capture-token")
+    app = create_app(db_path, audio_dir, labels_dir, labels_dir / "stream", "me", "correct horse", "k" * 64, app_token="capture-token")
     return TestClient(app), db_path, labels_dir
 
 
@@ -307,7 +309,7 @@ def test_a_stretch_thrown_out_leaves_the_stream_and_is_final_once_a_reprocess_ap
     assert page.count("class='turn left'") == 3
     undo = re.search(r"name='at' value='([^']+)'>Undo", page)[1]
     page = client.post("/forget/undo", data={"conversation_id": "c1", "at": html.unescape(undo)}).text
-    assert "at the next reprocess" not in page and "class='turn left'" not in page
+    assert "To throw out 00:" not in page and "class='turn left'" not in page
     throw_out("stretch", "a2", "a4")
 
     index = reprocess()
@@ -353,6 +355,39 @@ def test_a_tag_can_be_undone_and_the_page_s_script_gets_no_page_back(portal):
     assert "/audio/a0" in client.get("/").text  # offered again
     tagged, undone = [json.loads(line) for line in (labels_dir / "tags.jsonl").read_text().splitlines()]
     assert (tagged["name"], undone["name"], undone["at"]) == ("_media", "", tagged["at"])
+
+
+def test_a_conversation_is_held_until_released_from_its_page_once_it_has_ended(portal):
+    from hearsay.affect import SCHEMA as AFFECT_SCHEMA
+    from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
+    from hearsay.delivery import SCHEMA as DELIVERY_SCHEMA
+    from hearsay.hold import record_releases
+    from hearsay.stream import write_stream
+
+    client, db_path, labels_dir = portal
+    log_in(client)
+    now = time.time()
+    db = sqlite3.connect(db_path)
+    db.executescript(CONVERSATIONS_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA)
+    db.execute("INSERT INTO conversations VALUES ('c1', ?, ?, 32, 0)", (now - 3600.4, now - 3000.7))
+    db.execute("INSERT INTO conversations VALUES ('c2', ?, ?, 5, 1)", (now - 100.3, now - 10.2))  # still going
+    db.execute("INSERT INTO conversation_audio VALUES ('c2', '2026-01-02T00:00:00+00:00', 10, 1, NULL, NULL)")
+    db.commit()
+    db.close()
+
+    page = client.get("/conversations/c1").text
+    assert "Idea Machine: held until" in page and "Release to Idea Machine now" in page
+    assert "Release to Idea Machine now" not in client.get("/conversations/c2").text
+    client.post("/release", data={"conversation_id": "c2"})
+    assert not (labels_dir / "release.jsonl").exists()
+
+    page = client.post("/release", data={"conversation_id": "c1"}).text
+    assert "Idea Machine: released: out at the next reprocess" in page and "Release to" not in page
+    record_releases(db_path, labels_dir)
+    write_stream(db_path, labels_dir / "stream")
+    listed = client.get("/conversations").text
+    assert listed.count("in the stream") == 1 and listed.count("held until") == 1
+    assert "Idea Machine: in the stream" in client.get("/conversations/c1").text
 
 
 def test_delete_throws_a_turn_out_and_can_be_undone_until_a_reprocess_applies_it(portal):
@@ -410,7 +445,7 @@ def test_words_wait_in_a_draft_and_update_commits_them_with_lattice_s_all_at_onc
     vocab = tmp_path / "vocab.json"
     vocab.write_text(json.dumps({"format_version": 1, "terms": [
         {"term": "gnomon", "source": "repair", "heard_as": "no man"}, {"term": "Gutenberg", "source": "archive"}]}))
-    client = TestClient(create_app(db_path, tmp_path / "audio", labels_dir, "me", "correct horse", "k" * 64,
+    client = TestClient(create_app(db_path, tmp_path / "audio", labels_dir, labels_dir / "stream", "me", "correct horse", "k" * 64,
                                    vocab_path=vocab))
     log_in(client)
 
