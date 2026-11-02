@@ -223,17 +223,26 @@ addresses it prints, plays the turns that sound like the TV you've tagged
 Media, then the turns it couldn't decide, latest first. It listens on the LAN and tailnet only, so
 from your phone use the tailnet address, or the Hearsay app's Tag tab,
 which shows the same portal and logs in with the app's capture token. Tag
-each turn Me, Someone else, Media, Music or Noise: Me reaches the stream as
-yours, Someone else as a stranger, and the rest (TV or video talk, songs,
-noise) is left out. A tag applies to that turn whatever its voice said. The more TV you tag
+each turn Me, Other, Mic, Media, Music or Noise: Me reaches the stream as
+yours, Other and Mic (someone on a microphone or PA) as a stranger, and the
+rest (TV or video talk, songs, noise) is left out. Left out isn't gone: its
+words stay in Hearsay, and a tag puts it back. Delete throws the turn out, as
+on a conversation's page below: undo it until the next reprocess, then it's
+gone for good. A tag applies to that turn whatever its voice said. The more TV you tag
 Media, the better the TV list gets. Turns on the TV list leave the stream as Media even untagged; tag one
-Someone else, Me or On a mic to put it back.
+Other, Me or Mic to put it back.
 
 The portal's Conversations page lists every conversation, newest first;
 narrow it to a named place, or to the ones whose words contain a search.
 Each opens as its transcript in order, with who the stream says said each
 turn (or why it's left out) and where; tap a turn's time to play the
-conversation from there.
+conversation from there. To throw out a stretch, check its first and last
+turns and press Throw out checked, or Throw out all for the whole
+conversation, with a few words of why if you like (Idea Machine sees
+them). Until the next reprocess (within the hour) you can undo it; then
+its words leave the stream and Hearsay's database for good, and Idea
+Machine is told to delete what it took from them. Its audio is kept until
+retention.
 
 The portal's Places page lists spots where the phone recorded and no named
 place is near (how long, which days, a map link); name them there. Only these

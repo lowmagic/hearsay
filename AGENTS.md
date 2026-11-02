@@ -49,9 +49,9 @@ operator to tag. Slice 21 is done (2026-10-30): turns that sound like the
 media the operator has tagged leave the stream as media (`hearsay/media.py`).
 Now slice 22: turns whose words are a song's, not anyone talking, leave the
 stream as music (`hearsay/music.py`). Its done-when is checked by listening
-to new capture on slice 20's conversation page, built first for that. Next,
-the rest of slice 20
-(throw out what was said, and hold the stream two weeks), then slice 19 (turns
+to new capture on slice 20's conversation page, built first for that. Throwing
+out what was said, slice 20's next part, is built too. Next, the rest of
+slice 20 (hold the stream two weeks), then slice 19 (turns
 kept without their audio) and slice 12 (retention), which change the
 invariants on raw payloads and re-running from raw. Slice 12 also waits for Idea Machine's M2, which validates me / not me.
 Every slice, done or shelved, and what was measured for it is in the

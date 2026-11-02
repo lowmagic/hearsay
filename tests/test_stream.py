@@ -4,6 +4,7 @@ import sqlite3
 from hearsay.affect import SCHEMA as AFFECT_SCHEMA
 from hearsay.assemble import SCHEMA as ASSEMBLE_SCHEMA
 from hearsay.delivery import SCHEMA as DELIVERY_SCHEMA
+from hearsay.forget import SCHEMA as FORGET_SCHEMA
 from hearsay.media import SCHEMA as MEDIA_SCHEMA
 from hearsay.music import SCHEMA as MUSIC_SCHEMA
 from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
@@ -34,7 +35,7 @@ def build(tmp_path):
     db_path = tmp_path / "h.sqlite"
     db = sqlite3.connect(db_path)
     db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + CONVERSATIONS_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA
-                    + PLACES_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA + MUSIC_SCHEMA + MEDIA_SCHEMA)
+                    + PLACES_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA + MUSIC_SCHEMA + MEDIA_SCHEMA + FORGET_SCHEMA)
     # The owner's tone of voice, scored on their turn only (hearsay/affect.py).
     db.execute("INSERT INTO turn_affect VALUES ('c1:0000', 0.42, 0.45, 0.6)")
     db.execute("INSERT INTO turn_delivery VALUES ('c1:0000', 4.1, 1, 0.6)")

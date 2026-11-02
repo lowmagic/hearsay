@@ -1,5 +1,7 @@
+import html
 import io
 import json
+import re
 import sqlite3
 import wave
 
@@ -9,6 +11,7 @@ from fastapi.testclient import TestClient
 pytest.importorskip("numpy")
 
 from hearsay.assemble import SCHEMA as ASSEMBLE_SCHEMA  # noqa: E402
+from hearsay.forget import SCHEMA as FORGET_SCHEMA  # noqa: E402
 from hearsay.media import SCHEMA as MEDIA_SCHEMA  # noqa: E402
 from hearsay.music import SCHEMA as MUSIC_SCHEMA  # noqa: E402
 from hearsay.parse import SCHEMA as PARSE_SCHEMA  # noqa: E402
@@ -33,7 +36,7 @@ def portal(tmp_path):
 
     db = sqlite3.connect(db_path)
     db.executescript(PARSE_SCHEMA + ASSEMBLE_SCHEMA + TURNS_SCHEMA + SPEAKERS_SCHEMA + PLACES_SCHEMA + MEDIA_SCHEMA
-                    + MUSIC_SCHEMA)
+                    + MUSIC_SCHEMA + FORGET_SCHEMA)
     db.execute("INSERT INTO conversation_audio VALUES ('c1', '2026-01-01T00:00:00+00:00', 40, 1, 'c1.wav', 'sha')")
     for idx in range(8):
         turn_id = f"{'ab'[idx % 2]}{idx}"
@@ -269,6 +272,74 @@ def test_turns_that_sound_like_tagged_media_are_offered_unless_the_owner_s_by_vo
     assert "/audio/b1" not in client.get("/").text
 
 
+def test_a_stretch_thrown_out_leaves_the_stream_and_is_final_once_a_reprocess_applies_it(portal):
+    from hearsay.affect import SCHEMA as AFFECT_SCHEMA
+    from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
+    from hearsay.delivery import SCHEMA as DELIVERY_SCHEMA
+    from hearsay.forget import forget
+    from hearsay.stream import write_stream
+
+    client, db_path, labels_dir = portal
+    stream = labels_dir / "stream"
+    log_in(client)
+    db = sqlite3.connect(db_path)
+    db.executescript(CONVERSATIONS_SCHEMA + AFFECT_SCHEMA + DELIVERY_SCHEMA)
+    db.execute("INSERT INTO conversations VALUES ('c1', 1767225600, 1767225640, 32, 0)")
+    db.executemany("INSERT INTO conversation_taps VALUES ('c1', ?)", [(1767225601,), (1767225617,)])
+    db.commit()
+    db.close()
+
+    def throw_out(action: str, *turn_ids: str) -> str:
+        data = {"conversation_id": "c1", "action": action, "reason": " too  personal ", "turn_id": list(turn_ids)}
+        return client.post("/forget", data=data).text
+
+    def reprocess() -> dict:
+        forget(db_path, labels_dir)
+        write_stream(db_path, stream)
+        return json.loads((stream / "index.json").read_text())
+
+    def said() -> list[str]:
+        return [json.loads(line)["utterance_id"] for line in (stream / "conversations/c1.jsonl").read_text().splitlines()]
+
+    # The first and last turns checked, a2 at 10 s and a4 ending at 24 s, take b3 between them.
+    page = throw_out("stretch", "a4", "a2")
+    assert "To throw out 00:00:10–00:00:24 · too personal at the next reprocess" in page
+    assert page.count("class='turn left'") == 3
+    undo = re.search(r"name='at' value='([^']+)'>Undo", page)[1]
+    page = client.post("/forget/undo", data={"conversation_id": "c1", "at": html.unescape(undo)}).text
+    assert "at the next reprocess" not in page and "class='turn left'" not in page
+    throw_out("stretch", "a2", "a4")
+
+    index = reprocess()
+    assert said() == ["c1:0000", "c1:0001", "c1:0005", "c1:0006", "c1:0007"]
+    assert index["conversations"][0]["taps"] == ["2026-01-01T00:00:01.000Z"]  # not the one at 17 s
+    [entry] = json.loads((stream / "forgotten.json").read_text())
+    assert entry == {"forgotten_at": entry["forgotten_at"], "start": "2026-01-01T00:00:10.000Z",
+                     "end": "2026-01-01T00:00:24.000Z", "conversation_id": "c1", "utterance_ids": ["a2", "b3", "a4"],
+                     "reason": "too personal"}
+
+    # Applied, it can't be taken back: the page offers no Undo, and one sent anyway isn't written.
+    page = client.get("/conversations/c1").text
+    assert "Thrown out 00:00:10–00:00:24 · too personal" in page and "Undo" not in page and "some thrown out" in client.get("/conversations").text
+    marks = (labels_dir / "forget.jsonl").read_text()
+    client.post("/forget/undo", data={"conversation_id": "c1", "at": html.unescape(undo)})
+    assert (labels_dir / "forget.jsonl").read_text() == marks
+    # Even if the database got its words back, forgotten.json keeps them out of the stream.
+    db = sqlite3.connect(db_path)
+    db.execute("INSERT INTO turns VALUES ('a2', 'c1', 2, 10.0, 14.0, 'synthetic', NULL, NULL)")
+    db.execute("DELETE FROM forgotten")
+    db.commit()
+    db.close()
+    write_stream(db_path, stream)
+    assert "c1:0002" not in said() and len(json.loads((stream / "forgotten.json").read_text())) == 1
+
+    throw_out("whole")
+    index = reprocess()
+    assert index["conversations"] == [] and not (stream / "conversations/c1.jsonl").exists()
+    assert [f["start"] for f in json.loads((stream / "forgotten.json").read_text())] == [
+        "2026-01-01T00:00:10.000Z", "2026-01-01T00:00:00.000Z"]
+
+
 def test_a_tag_can_be_undone_and_the_page_s_script_gets_no_page_back(portal):
     client, _, labels_dir = portal
     script = {"X-Requested-With": "fetch"}
@@ -282,6 +353,38 @@ def test_a_tag_can_be_undone_and_the_page_s_script_gets_no_page_back(portal):
     assert "/audio/a0" in client.get("/").text  # offered again
     tagged, undone = [json.loads(line) for line in (labels_dir / "tags.jsonl").read_text().splitlines()]
     assert (tagged["name"], undone["name"], undone["at"]) == ("_media", "", tagged["at"])
+
+
+def test_delete_throws_a_turn_out_and_can_be_undone_until_a_reprocess_applies_it(portal):
+    from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
+    from hearsay.forget import forget
+
+    client, db_path, labels_dir = portal
+    script = {"X-Requested-With": "fetch"}
+    log_in(client)
+    page = client.get("/").text
+    assert "value='_mic'>Mic</button></div><div class='row'><button type='submit' name='category' value='_media'" in page
+    assert "formaction='/turn/delete'>Delete</button></div>" in page
+
+    assert client.post("/turn/delete", data={"turn_id": "a0"}, headers=script).status_code == 204
+    assert "/audio/a0" not in client.get("/").text
+    assert client.post("/turn/delete/undo", data={"turn_id": "a0"}, headers=script).status_code == 204
+    assert "/audio/a0" in client.get("/").text
+    marked, undone = [json.loads(line) for line in (labels_dir / "forget.jsonl").read_text().splitlines()]
+    assert (marked["type"], undone["type"], marked["at"]) == (
+        "forget", "undo", ["2026-01-01T00:00:00+00:00", "2026-01-01T00:00:04+00:00"]) and undone["at"] == marked["at"]
+    assert not (labels_dir / "tags.jsonl").exists()  # a delete isn't a tag
+
+    client.post("/turn/delete", data={"turn_id": "a0"}, headers=script)
+    db = sqlite3.connect(db_path)
+    db.executescript(CONVERSATIONS_SCHEMA)
+    db.execute("INSERT INTO conversations VALUES ('c1', 1767225600, 1767225640, 32, 0)")
+    db.commit()
+    db.close()
+    assert forget(db_path, labels_dir) == {"stretches": 1, "turns_removed": 1}
+    # Applied: the turn is gone, so there's nothing left to undo.
+    assert client.post("/turn/delete/undo", data={"turn_id": "a0"}, headers=script).status_code == 404
+    assert len((labels_dir / "forget.jsonl").read_text().splitlines()) == 3
 
 
 def test_a_spot_that_isnt_a_place_stops_being_offered(portal):

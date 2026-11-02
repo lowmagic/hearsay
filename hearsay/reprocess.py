@@ -34,6 +34,7 @@ from hearsay.assemble import assemble, remove_stale_wavs
 from hearsay.cache import Cache
 from hearsay.capture import load_captures
 from hearsay.conversations import find_conversations
+from hearsay.forget import forget
 from hearsay.imports import load_imports
 from hearsay.media import score_media
 from hearsay.music import score_music
@@ -70,6 +71,8 @@ def run(raw_dir: Path, db_path: Path, audio_dir: Path, labels_dir: Path, model_d
         report("Where conversations happened:", find_places(staging, labels_dir))
         report(f"Assembled conversation audio in {audio_dir}:", assemble(raw_dir, staging, audio_dir))
         report(f"Turns from transcripts in {transcripts_dir}:", build_turns(staging, transcripts_dir))
+        # Before anything else reads turns, so thrown-out ones count for nothing.
+        report("Stretches the operator threw out:", forget(staging, labels_dir))
         report("Operator labels and tags, matched to turns:", record_operator_input(staging, labels_dir))
         report("Speaker embeddings and labels:", label_speakers(raw_dir, staging, labels_dir, model_dir, cache))
         report("Turns that sound like tagged media:", score_media(staging))
