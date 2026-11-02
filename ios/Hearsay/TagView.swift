@@ -19,9 +19,10 @@ struct TagView: View {
                     // A fresh web view on each refresh, as restarting the app
                     // gives: reloading the old one can stay stuck on a
                     // connection that died while Tailscale reconnected.
+                    // It stops above the tab bar: the page's bars that stick
+                    // to the bottom (throwing out turns) would sit under it.
                     PortalView(home: url)
                         .id(reload)
-                        .ignoresSafeArea(edges: .bottom)
                 } else {
                     ContentUnavailableView("No Portal Address", systemImage: "tag",
                                            description: Text("Enter it in the Recorder tab's Settings, under Server. install/ios.sh prints it."))
