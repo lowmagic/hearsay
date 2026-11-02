@@ -17,7 +17,8 @@ a turn collapses it to an Undo button rather than reloading the page; undoing
 appends a record that takes the tag back. A tag is written to labels/tags.jsonl, the same durable
 input reprocess reads, with the turn's time span so it
 survives re-transcription, and applies to that turn whatever its voice said
-(hearsay.turns.categories). Delete throws the turn out, as a conversation's
+(hearsay.turns.categories). Each turn's time links to it in its
+conversation's transcript, to hear it in context. Delete throws the turn out, as a conversation's
 page does (below): Noise keeps its words in Hearsay, Delete doesn't.
 
 Times are the NAS's own time zone, the operator's.
@@ -104,7 +105,7 @@ MATCHES_SHOWN = 3
 REASON_CHARACTERS = 200
 
 UNSURE_SQL = """
-SELECT t.turn_id, t.conversation_id, t.start, t.end, t.text, ca.zero_at
+SELECT t.turn_id, t.conversation_id, t.idx, t.start, t.end, t.text, ca.zero_at
 FROM turns t
 JOIN turn_speakers ts ON ts.turn_id = t.turn_id
 JOIN conversation_audio ca ON ca.conversation_id = t.conversation_id
@@ -114,7 +115,7 @@ ORDER BY ca.zero_at DESC, t.start DESC
 
 # Turns that sound like tagged media, unless their own voice or channel said the owner's.
 MEDIA_SQL = """
-SELECT t.turn_id, t.conversation_id, t.start, t.end, t.text, ca.zero_at
+SELECT t.turn_id, t.conversation_id, t.idx, t.start, t.end, t.text, ca.zero_at
 FROM turn_media tm
 JOIN turns t ON t.turn_id = tm.turn_id
 JOIN turn_speakers ts ON ts.turn_id = t.turn_id
@@ -158,7 +159,7 @@ textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 0.6rem; 
 .filter button { width: auto; margin: 0; padding: 0.4rem 1rem; }
 .player { position: sticky; top: 0; background: var(--bg); padding: 0.3rem 0; }
 .turn { padding: 0.4rem 0; scroll-margin-top: 4rem; }
-.turn a.at { display: inline; }
+.turn a.at, a.inline { display: inline; }
 .turn.left { color: var(--muted); }
 .turn.now, .turn:target { background: color-mix(in srgb, var(--accent) 15%, transparent); }
 .place { font-weight: 600; border-bottom: none; padding-top: 1rem; }
@@ -290,16 +291,19 @@ CATEGORY_ROWS = (("_me", "_stranger", "_mic"), ("_media", "_music", "_noise"))
 
 
 def clip_player(s: dict) -> str:
-    """A turn's audio with its words, when and where it was said, and a button per category."""
+    """A turn's audio with its words, when and where it was said, and a button per category.
+    When links to the turn in its conversation, to hear it in context."""
     words = s["text"] if len(s["text"]) <= CLIP_CHARACTERS else s["text"][:CLIP_CHARACTERS].rsplit(" ", 1)[0] + " …"
-    said = [f"{s['end'] - s['start']:.1f} s", f"{local(s['at']):%b %-d %H:%M}"]
-    said += [s["place"]] if s["place"] else []
+    conversation = quote(s["conversation_id"])
+    when = (f"<a class='inline' href='/conversations/{conversation}#{conversation}-{s['idx']}'>"
+            f"{local(s['at']):%b %-d %H:%M}</a>")
+    said = [f"{s['end'] - s['start']:.1f} s", when] + ([html.escape(s["place"])] if s["place"] else [])
     people, other = ("".join(f"<button type='submit' name='category' value='{value}'>{CATEGORIES[value]}</button>"
                              for value in row) for row in CATEGORY_ROWS)
     other += "<button type='submit' class='delete' formaction='/turn/delete'>Delete</button>"
     return (f"<audio controls preload='none' src='/audio/{quote(s['turn_id'])}'></audio>"
             f"<div class='words'>{html.escape(words)}</div>"
-            f"<div class='muted'>{html.escape(' · '.join(said))}</div>"
+            f"<div class='muted'>{' · '.join(said)}</div>"
             f"<form class='clip' method='post' action='/turn'>"
             f"<input type='hidden' name='turn_id' value='{html.escape(s['turn_id'])}'>"
             f"<div class='row'>{people}</div><div class='row'>{other}</div></form>")

@@ -169,8 +169,8 @@ def test_each_clip_shows_its_words_and_when_and_where_it_was_said(portal):
 
     page = client.get("/").text
     assert "Pass the &lt;salt&gt;" in page
-    assert "4.0 s · Jan 1 00:00 · Blind Monk" in page  # a0, at 0 s
-    assert "Jan 1 00:00 · Home" in page  # a4, at 20 s
+    assert "4.0 s · <a class='inline' href='/conversations/c1#c1-0'>Jan 1 00:00</a> · Blind Monk" in page  # a0, at 0 s
+    assert "#c1-4'>Jan 1 00:00</a> · Home" in page  # a4, at 20 s
 
 
 def test_conversations_narrow_to_a_place_and_to_words_said_and_read_in_order(portal):
@@ -235,6 +235,7 @@ def test_turns_hearsay_couldnt_decide_are_offered_and_the_operator_s_tag_decides
     page = client.get("/").text
     assert "4 turn(s)" in page and "/audio/a6" in page and "/audio/b1" not in page  # only the a turns
     assert page.index("/audio/a6") < page.index("/audio/a0")  # latest first
+    assert "href='/conversations/c1#c1-6'>Jan 1 00:00</a>" in page  # each to hear in its conversation
 
     client.post("/turn", data={"turn_id": "a0", "category": "_me"})
     client.post("/turn", data={"turn_id": "a2", "category": "_stranger"})
