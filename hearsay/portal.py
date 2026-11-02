@@ -19,6 +19,13 @@ input reprocess reads, with the turn's time span so it
 survives re-transcription, and applies to that turn whatever its voice said
 (hearsay.turns.categories).
 
+The Conversations page lists every conversation, newest first, narrowed to
+a named place or to those whose words contain a search, and opens each as
+its transcript in order: every turn with when, where and who the stream
+says said it (or why it's left out), and the conversation's audio, which
+plays from any turn on. It reads what the last reprocess wrote; the
+transcript is the first part of roadmap slice 20.
+
 The Words page edits the words transcription is nudged toward
 (hearsay/words.py): a draft kept until the operator presses Update, which
 commits it with Lattice's approved terms all at once.
@@ -41,7 +48,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from hearsay.media import HINT
 from hearsay.places import (
@@ -55,7 +62,8 @@ from hearsay.places import (
     unnamed_spots,
     visits,
 )
-from hearsay.turns import read_operator_files, resolve, wall
+from hearsay.stream import letters, speaker_kind
+from hearsay.turns import categories, read_operator_files, resolve, wall
 from hearsay.words import boosted, commit, read_committed, read_draft, read_lattice, save_draft, tidy
 
 COOKIE = "hearsay_session"
@@ -74,6 +82,8 @@ OPENING_TURNS = 2
 OPENING_CHARACTERS = 200
 # A clip's words, shown with it so the operator knows which voice is meant.
 CLIP_CHARACTERS = 280
+# Turns shown under a conversation in the list when a search matches them.
+MATCHES_SHOWN = 3
 
 UNSURE_SQL = """
 SELECT t.turn_id, t.conversation_id, t.start, t.end, t.text, ca.zero_at
@@ -123,6 +133,17 @@ textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 0.6rem; 
 .tagged { display: flex; align-items: center; gap: 0.5rem; }
 .tagged span { flex: 1; }
 .tagged button { width: auto; margin: 0; padding: 0.4rem 1rem; }
+.filter { display: flex; gap: 0.5rem; }
+.filter select, .filter input { font: inherit; padding: 0.4rem; }
+.filter input { flex: 1; min-width: 0; }
+.filter button { width: auto; margin: 0; padding: 0.4rem 1rem; }
+.player { position: sticky; top: 0; background: var(--bg); padding: 0.3rem 0; }
+.turn { padding: 0.4rem 0; scroll-margin-top: 4rem; }
+.turn a.at { display: inline; }
+.turn.left { color: var(--muted); }
+.turn.now, .turn:target { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.place { font-weight: 600; border-bottom: none; padding-top: 1rem; }
+mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; }
 """
 
 # Tags a clip without leaving the page, and collapses it to an Undo button that
@@ -149,6 +170,28 @@ document.addEventListener('submit', async event => {
   undo.onclick = async () => { if (await post('/turn/undo', {turn_id})) item.replaceChildren(...saved); };
   row.append(said, undo);
   item.replaceChildren(row);
+});
+"""
+
+
+# Plays the conversation from a turn's time, and marks the turn being heard.
+# Without scripts a turn's time links to its own clip.
+TRANSCRIPT_SCRIPT = """
+const player = document.getElementById('player');
+const turns = [...document.querySelectorAll('li[data-start]')];
+document.addEventListener('click', event => {
+  const link = event.target.closest('a.at');
+  if (!link) return;
+  event.preventDefault();
+  const seconds = parseFloat(link.closest('li').dataset.start);
+  if (player.readyState) player.currentTime = seconds;
+  else player.addEventListener('loadedmetadata', () => { player.currentTime = seconds; }, {once: true});
+  player.play();
+});
+player.addEventListener('timeupdate', () => {
+  let now = null;
+  for (const turn of turns) { if (parseFloat(turn.dataset.start) <= player.currentTime) now = turn; else break; }
+  turns.forEach(turn => turn.classList.toggle('now', turn === now));
 });
 """
 
@@ -219,6 +262,42 @@ def clip_player(s: dict) -> str:
             f"<div class='row'>{buttons}</div></form>")
 
 
+def marked(text: str, query: str) -> str:
+    """The text escaped, with each match of the search marked."""
+    if not query:
+        return html.escape(text)
+    parts = re.split(f"({re.escape(query)})", text, flags=re.IGNORECASE)
+    return "".join(f"<mark>{html.escape(p)}</mark>" if i % 2 else html.escape(p) for i, p in enumerate(parts))
+
+
+def conversation_places(db: sqlite3.Connection) -> dict[str, list[tuple[str, float, float]]]:
+    """Each conversation's named places, in order: (place, start, end), unix seconds."""
+    places = {}
+    for conversation_id, place, start, end in db.execute(
+            "SELECT conversation_id, place, start, end FROM conversation_places ORDER BY start"):
+        places.setdefault(conversation_id, []).append((place, start, end))
+    return places
+
+
+def place_at(places: list[tuple[str, float, float]], at: float) -> str | None:
+    """The named place a moment was at, from a conversation's places in order.
+    A place lasts until the next one starts (hearsay/places.py)."""
+    return next((place for place, start, end in reversed(places) if start <= at <= end), None)
+
+
+def who(label: str | None, category: str | None, basis: str | None, voice: str | None) -> str:
+    """Who the stream says said a turn, or why it's left out of it. Voices
+    other than the owner's are lettered as diarization told them apart."""
+    found = speaker_kind(label, category, basis)
+    if found is None:
+        return f"Left out · {category.removeprefix('_')}"
+    if found[0] == "owner":
+        return "Me"
+    if found[0] == "unknown":
+        return "Not sure"
+    return f"Not me · {voice}" if voice else "Not me"
+
+
 def coordinates(text: str) -> tuple[float, float] | None:
     """Latitude and longitude from pasted text: "-26.12, 80.14", or an Apple or
     Google Maps link that has them in it (ll=, q=, @). Not an address: looking
@@ -287,19 +366,14 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, user: str, pass
         db.row_factory = sqlite3.Row
         try:
             rows = [dict(r) for r in db.execute(sql, params)]
-            places = {}
-            for conversation_id, place, start, end in db.execute(
-                    "SELECT conversation_id, place, start, end FROM conversation_places ORDER BY start"):
-                places.setdefault(conversation_id, []).append((place, start, end))
+            places = conversation_places(db)
         finally:
             db.close()
         done = tagged()
         rows = [row for row in rows if row["turn_id"] not in done]
         for row in rows:
             row["at"] = datetime.fromisoformat(row["zero_at"]).timestamp() + row["start"]
-            # A place lasts until the next one starts (hearsay/places.py).
-            row["place"] = next((place for place, start, end in reversed(places.get(row["conversation_id"], []))
-                                 if start <= row["at"] <= end), None)
+            row["place"] = place_at(places.get(row["conversation_id"], []), row["at"])
         return rows
 
     def append_tag(record: dict, path: Path = tags_path) -> None:
@@ -374,7 +448,8 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, user: str, pass
         return page("Hearsay", f"""{media_section}
 <h1>Not sure who spoke</h1>
 <p class="muted">{len(unsure)} turn(s) Hearsay couldn't tell were you or not, latest first.
-Tag each; it applies at the next reprocess. · <a href="/places">Places</a> · <a href="/words">Words</a></p>
+Tag each; it applies at the next reprocess. · <a href="/conversations">Conversations</a> ·
+<a href="/places">Places</a> · <a href="/words">Words</a></p>
 <ul>{players or "<li class='muted'>Nothing to check.</li>"}</ul>
 <h2>Transcription</h2><ul><li><a href="/words">Words <span class="muted">· {len(boosted(read_committed(labels_dir)))} in use
 {"· a draft is waiting" if read_draft(labels_dir) is not None else ""}</span></a></li></ul>
@@ -415,6 +490,121 @@ Tag each; it applies at the next reprocess. · <a href="/places">Places</a> · <
     @app.post("/turn/undo")
     async def untag_turn(request: Request) -> Response:
         return await tag(request, undo=True)
+
+    @app.get("/conversations")
+    async def list_conversations(request: Request) -> Response:
+        if not logged_in(request):
+            return RedirectResponse("/login", status_code=303)
+        place = request.query_params.get("place", "")
+        query = " ".join(request.query_params.get("q", "").split())
+        db = connect()
+        try:
+            conversations = db.execute(
+                "SELECT conversation_id, start, end, open FROM conversations ORDER BY start DESC").fetchall()
+            places = conversation_places(db)
+            turns = {}
+            for conversation_id, idx, text in db.execute(
+                    "SELECT conversation_id, idx, text FROM turns ORDER BY conversation_id, start, idx"):
+                turns.setdefault(conversation_id, []).append((idx, text))
+        finally:
+            db.close()
+
+        items = []
+        for conversation_id, start, end, is_open in conversations:
+            here = places.get(conversation_id, [])
+            if place and place not in {name for name, _, _ in here}:
+                continue
+            said = turns.get(conversation_id, [])
+            matches = [(idx, text) for idx, text in said if query.casefold() in text.casefold()] if query else []
+            if query and not matches:
+                continue
+            url = f"/conversations/{quote(conversation_id)}" + (f"?q={quote(query)}" if query else "")
+            names = list(dict.fromkeys(name for name, _, _ in here))
+            facts = [f"{(end - start) / 60:.0f} min", *names, f"{len(said)} turn(s)"] + (["still going"] if is_open else [])
+            shown = "".join(f"<li><a href='{url}#t{idx}'>{marked(text, query)}</a></li>"
+                            for idx, text in matches[:MATCHES_SHOWN])
+            more = f"<div class='muted'>and {len(matches) - MATCHES_SHOWN} more</div>" if len(matches) > MATCHES_SHOWN else ""
+            items.append(f"<li><a href='{url}'><strong>{datetime.fromtimestamp(start, timezone.utc):%a %b %-d %H:%M} UTC"
+                         f"</strong> <span class='muted'>{html.escape(' · '.join(facts))}</span></a>"
+                         f"{f'<ul>{shown}</ul>{more}' if shown else ''}</li>")
+        options = "".join(f"<option{' selected' if name == place else ''}>{html.escape(name)}</option>"
+                          for name in sorted({n for here in places.values() for n, _, _ in here}))
+        return page("Hearsay conversations", f"""
+<p><a href="/">← Hearsay</a></p>
+<h1>Conversations</h1>
+<form class="filter" method="get" action="/conversations">
+  <select name="place" aria-label="Place"><option value="">Anywhere</option>{options}</select>
+  <input name="q" type="search" value="{html.escape(query)}" placeholder="Words said" aria-label="Words said">
+  <button type="submit">Find</button>
+</form>
+<p class="muted">{len(items)} of {len(conversations)} conversation(s), newest first, as of the last reprocess.</p>
+<ul>{"".join(items) or "<li class='muted'>None.</li>"}</ul>""")
+
+    @app.get("/conversations/{conversation_id}")
+    async def show_conversation(request: Request, conversation_id: str) -> Response:
+        if not logged_in(request):
+            return RedirectResponse("/login", status_code=303)
+        query = " ".join(request.query_params.get("q", "").split())
+        db = connect()
+        try:
+            found = db.execute(
+                "SELECT c.start, c.end, c.open, ca.zero_at, ca.wav_file FROM conversations c"
+                " JOIN conversation_audio ca USING (conversation_id) WHERE conversation_id = ?",
+                (conversation_id,)).fetchone()
+            places = conversation_places(db).get(conversation_id, [])
+            tagged_as = categories(db)
+            turns = db.execute(
+                "SELECT t.turn_id, t.idx, t.start, t.end, t.text, t.diar_speaker, ts.label, ts.basis FROM turns t"
+                " JOIN turn_speakers ts USING (turn_id) WHERE t.conversation_id = ? ORDER BY t.start, t.idx",
+                (conversation_id,)).fetchall()
+        finally:
+            db.close()
+        if found is None:
+            return Response(status_code=404)
+        start, end, is_open, zero_at, wav_file = found
+        zero = datetime.fromisoformat(zero_at).timestamp()
+        voices = {}  # diarized speaker -> A, B, ... in order of first turn
+        lines, last_place = [], None
+        for turn_id, idx, turn_start, turn_end, text, voice, label, basis in turns:
+            at = zero + turn_start
+            place = place_at(places, at)
+            if place and place != last_place:
+                lines.append(f"<li class='place'>At {html.escape(place)}</li>")
+                last_place = place
+            if voice is not None and voice not in voices:
+                voices[voice] = letters(len(voices))
+            speaker = who(label, tagged_as.get(turn_id), basis, voices.get(voice))
+            lines.append(
+                f"<li id='t{idx}' class='turn{' left' if speaker.startswith('Left out') else ''}' data-start='{turn_start:.2f}'>"
+                f"<a class='at' href='/audio/{quote(turn_id)}'>{datetime.fromtimestamp(at, timezone.utc):%H:%M:%S}</a> "
+                f"<span class='muted'>{html.escape(speaker)}</span><div>{marked(text, query)}</div></li>")
+        player = (f"<div class='player'><audio id='player' controls preload='none'"
+                  f" src='/conversations/{quote(conversation_id)}/audio'></audio></div>" if wav_file else
+                  "<p class='muted'>No audio.</p>")
+        names = list(dict.fromkeys(name for name, _, _ in places))
+        facts = [f"{(end - start) / 60:.0f} min", *names, f"{len(turns)} turn(s)"] + (["still going"] if is_open else [])
+        return page("Hearsay conversation", f"""
+<p><a href="/conversations">← Conversations</a></p>
+<h1>{datetime.fromtimestamp(start, timezone.utc):%a %b %-d %H:%M} UTC</h1>
+<p class="muted">{html.escape(' · '.join(facts))}. Tap a time to play from there.</p>
+{player}
+<ul>{"".join(lines) or "<li class='muted'>Not transcribed yet.</li>"}</ul>
+<script>{TRANSCRIPT_SCRIPT}</script>""")
+
+    @app.get("/conversations/{conversation_id}/audio")
+    async def conversation_audio(request: Request, conversation_id: str) -> Response:
+        """The whole conversation WAV, in byte ranges as the player asks for them."""
+        if not logged_in(request):
+            return Response(status_code=401)
+        db = connect()
+        try:
+            row = db.execute("SELECT wav_file FROM conversation_audio WHERE conversation_id = ?",
+                             (conversation_id,)).fetchone()
+        finally:
+            db.close()
+        if row is None or row[0] is None:
+            return Response(status_code=404)
+        return FileResponse(audio_dir / row[0], media_type="audio/wav")
 
     @app.get("/places")
     async def show_places(request: Request) -> Response:

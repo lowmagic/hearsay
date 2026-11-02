@@ -165,6 +165,57 @@ def test_each_clip_shows_its_words_and_when_and_where_it_was_said(portal):
     assert "Jan 1 00:00 UTC · Home" in page  # a4, at 20 s
 
 
+def test_conversations_narrow_to_a_place_and_to_words_said_and_read_in_order(portal):
+    from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
+
+    client, db_path, _ = portal
+    log_in(client)
+    db = sqlite3.connect(db_path)
+    db.executescript(CONVERSATIONS_SCHEMA)
+    db.execute("INSERT INTO conversations VALUES ('c1', 1767225600, 1767225640, 32, 0)")
+    # A day later, at no named place, and with no audio kept.
+    db.execute("INSERT INTO conversations VALUES ('c2', 1767312000, 1767312010, 2, 1)")
+    db.execute("INSERT INTO conversation_audio VALUES ('c2', '2026-01-02T00:00:00+00:00', 10, 1, NULL, NULL)")
+    db.execute("INSERT INTO turns VALUES ('c2:0', 'c2', 0, 1, 3, 'Pass the bread', NULL, NULL)")
+    db.execute("INSERT INTO turn_speakers VALUES ('c2:0', 'c2', 1.0, NULL, 0.9, 'owner', 'voice')")
+    db.execute("UPDATE turns SET text = 'Pass the <salt>' WHERE turn_id = 'a2'")
+    db.execute("UPDATE turns SET diar_speaker = 'SPEAKER_07' WHERE turn_id IN ('b1', 'b5')")
+    db.execute("INSERT INTO turn_media VALUES ('b3', 0.95)")
+    db.execute("INSERT INTO conversation_places VALUES ('c1', 'Home', 1767225600, 1767225620)")
+    db.execute("INSERT INTO conversation_places VALUES ('c1', 'Back Room', 1767225620, 1767225640)")
+    db.commit()
+    db.close()
+
+    def listed(**params) -> list[str]:
+        return [c for c in ("c1", "c2") if f"/conversations/{c}" in client.get("/conversations", params=params).text]
+
+    page = client.get("/conversations").text
+    assert page.index("/conversations/c2") < page.index("/conversations/c1")  # newest first
+    assert "1 min · Home · Back Room · 8 turn(s)" in page and "still going" in page
+    assert listed(place="Home") == ["c1"]
+    assert listed(q="pass THE") == ["c1", "c2"]
+    assert listed(q="salt", place="Home") == ["c1"] and listed(q="salt", place="Nowhere") == []
+    found = client.get("/conversations", params={"q": "SALT"}).text
+    assert "<a href='/conversations/c1?q=SALT#t2'>Pass the &lt;<mark>salt</mark>&gt;</a>" in found
+
+    page = client.get("/conversations/c1", params={"q": "salt"}).text
+    turns = [page.index(f"id='t{idx}'") for idx in range(8)]
+    assert turns == sorted(turns)  # in the order said
+    assert page.index("At Home") < turns[0] < turns[3] < page.index("At Back Room") < turns[4]
+    assert "<a class='at' href='/audio/a0'>00:00:00</a> <span class='muted'>Not sure</span>" in page
+    assert "Not me · A" in page and "Not me</span>" in page  # b1 and b5 one voice, b7 unknown
+    assert "class='turn left' data-start='15.00'" in page and "Left out · media" in page  # b3 sounds like TV
+    assert "Pass the &lt;<mark>salt</mark>&gt;" in page
+    assert "No audio." in client.get("/conversations/c2").text
+    assert client.get("/conversations/nope").status_code == 404
+
+    whole = client.get("/conversations/c1/audio", headers={"Range": "bytes=0-43"})
+    assert whole.status_code == 206 and whole.content[:4] == b"RIFF"
+    assert client.get("/conversations/c2/audio").status_code == 404
+    client.cookies.clear()
+    assert client.get("/conversations/c1/audio").status_code == 401
+
+
 def test_turns_hearsay_couldnt_decide_are_offered_and_the_operator_s_tag_decides(portal):
     from hearsay.stream import write_stream
     from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
