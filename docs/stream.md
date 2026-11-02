@@ -158,7 +158,7 @@ Forgetting is the operator's input, applied on every reprocess, so a re-run from
 into the stream. Raw payloads and audio of a forgotten stretch are kept until retention (roadmap slice 12) deletes
 them. Until the operator can forget (slice 20), the list is empty.
 
-Slice 20 also holds each conversation back for a week, or until the operator releases it: until then it isn't in the
+Slice 20 also holds each conversation back for two weeks, or until the operator releases it: until then it isn't in the
 index at all. That's additive, so `format_version` stays 1.
 
 ## Guarantees

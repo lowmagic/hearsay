@@ -229,6 +229,12 @@ noise) is left out. A tag applies to that turn whatever its voice said. The more
 Media, the better the TV list gets. Turns on the TV list leave the stream as Media even untagged; tag one
 Someone else, Me or On a mic to put it back.
 
+The portal's Conversations page lists every conversation, newest first;
+narrow it to a named place, or to the ones whose words contain a search.
+Each opens as its transcript in order, with who the stream says said each
+turn (or why it's left out) and where; tap a turn's time to play the
+conversation from there.
+
 The portal's Places page lists spots where the phone recorded and no named
 place is near (how long, which days, a map link); name them there. Only these
 names reach the stream, never coordinates.
