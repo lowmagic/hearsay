@@ -1,7 +1,7 @@
 """Stretches the operator threw out (roadmap slice 20), removed on every reprocess.
 
-The operator marks a stretch on a conversation's page in the portal, from
-one turn to another or the whole conversation, with an optional reason. A
+The operator marks a stretch on a conversation's page in the portal, a run
+of turns checked one after another or the whole conversation, with an optional reason. A
 mark is durable input in labels/forget.jsonl, by absolute time like tags, so
 it applies whatever the transcript and conversation boundaries become:
 

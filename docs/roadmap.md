@@ -586,6 +586,17 @@ Done when: the operator reviews two weeks of conversations on the page,
 thrown-out stretches never reach Idea Machine, and the rest arrives on
 release or after the hold.
 
+Changed 2026-11-04, from the operator's review: Throw out checked takes
+the turns checked, each run of them one mark, not everything from the first
+to the last, so All not me and All media can check the turns Hearsay is
+sure of and leave the owner's between them. Turns it isn't sure of are
+marked yellow and left unchecked, since throwing out someone talking is
+worse than keeping some TV: those it couldn't tell who said (2,763 turns,
+60 minutes), media scores 0.5 to the hint (211, 35 minutes), and turns not
+the owner's only by their speaker whose own voice is closer to the owner's
+than the not-owner threshold (158 of 3,750). Check between fills in a
+stretch.
+
 ## 21. TV and other media, per turn
 
 TV and video dialogue is most of what reaches the stream that isn't anyone

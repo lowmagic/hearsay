@@ -267,9 +267,12 @@ says whether it's in the stream yet or held, and until when. To send one
 sooner, once it has ended, press Release to Idea Machine now on its page.
 Each opens as its transcript in order, with who the stream says said each
 turn (or why it's left out) and where; tap a turn's time to play the
-conversation from there. To throw out a stretch, check its first and last
-turns and press Throw out checked, or Throw out all for the whole
-conversation, with a few words of why if you like (Idea Machine sees
+conversation from there. To throw out turns, check them and press Throw out
+checked, or Throw out all for the whole conversation. All not me and All
+media check the turns Hearsay is sure of; those marked yellow (it couldn't
+tell who spoke, or it might be media, or the voice is close to yours) are
+left for you. Check between fills in a stretch from the first turn checked
+to the last. Either way, with a few words of why if you like (Idea Machine sees
 them). Until the next reprocess (within the hour) you can undo it; then
 its words leave the stream and Hearsay's database for good, and Idea
 Machine is told to delete what it took from them. Its audio is kept until
