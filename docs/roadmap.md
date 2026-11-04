@@ -267,6 +267,21 @@ audio past the window is deleted, the owner's too, except the enrollment
 windows' (a few minutes, so the owner can be enrolled in a new speaker
 model). The invariants on raw payloads and re-running from raw change with it.
 
+Decided 2026-11-04:
+
+- The invariants change to: raw payloads past the window are deleted, and
+  a conversation past it re-runs from its record only.
+- The window is 90 days to start, shortened by the operator as time goes on.
+- The audio models are good enough to fix their output for good: their
+  rare misses are outweighed, once Idea Machine's extraction reads the
+  turns, by what keeping the audio costs.
+- A thrown-out stretch's audio and raw payloads are deleted when its
+  conversation seals (a week after it ends), not after the window.
+- Gone means past the NAS's snapshots too: `fast` keeps nightly snapshots
+  for 2 weeks, and replicates them to `storage/fast-replica` (the HDD pool,
+  on the NAS), which keeps them for 2 months. So audio is wholly gone about
+  2 months after Hearsay deletes it.
+
 ## 13. Where a conversation happened
 
 The phone app records where the owner is while it captures, and each
