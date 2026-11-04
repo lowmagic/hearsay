@@ -35,9 +35,11 @@ its conversations through in order, with the quiet between them, each just
 as on its own page. It reads what the last reprocess wrote; the
 transcript is the first part of roadmap slice 20.
 
-On a conversation's page the operator throws out a stretch, from the first
-turn checked to the last, or the whole conversation, with an optional reason
-that Idea Machine will see. The mark is written to labels/forget.jsonl
+On a conversation's page the operator throws out the turns checked, each
+run of them one mark, or the whole conversation, with an optional reason
+that Idea Machine will see. All not me and All media check the turns Hearsay
+is sure are either, and leave those it isn't marked yellow (pick); Check
+between fills in a stretch. The mark is written to labels/forget.jsonl
 (hearsay/forget.py) and can be taken back until a reprocess applies it.
 
 The Words page edits the words transcription is nudged toward
@@ -79,6 +81,7 @@ from hearsay.places import (
     unnamed_spots,
     visits,
 )
+from hearsay.speakers import NOT_OWNER_THRESHOLD
 from hearsay.stream import letters, published, speaker_kind
 from hearsay.turns import categories, read_operator_files, resolve, wall
 from hearsay.words import boosted, commit, read_committed, read_draft, read_lattice, save_draft, tidy
@@ -101,6 +104,8 @@ OPENING_CHARACTERS = 200
 CLIP_CHARACTERS = 280
 # Turns shown under a conversation in the list when a search matches them.
 MATCHES_SHOWN = 3
+# A media score from here to the hint is too unsure for All media to check.
+MEDIA_UNSURE = 0.5
 # Why a stretch was thrown out: a few words, which reach Idea Machine.
 REASON_CHARACTERS = 200
 
@@ -125,8 +130,8 @@ ORDER BY ca.zero_at DESC, t.start DESC
 """
 
 STYLE = """
-:root { color-scheme: light dark; --fg: #111; --bg: #fff; --muted: #666; --line: #ddd; --accent: #2458d6; }
-@media (prefers-color-scheme: dark) { :root { --fg: #eee; --bg: #121212; --muted: #999; --line: #333; --accent: #7fa4ff; } }
+:root { color-scheme: light dark; --fg: #111; --bg: #fff; --muted: #666; --line: #ddd; --accent: #2458d6; --unsure: #e0b000; --unsure-text: #8a6d00; }
+@media (prefers-color-scheme: dark) { :root { --fg: #eee; --bg: #121212; --muted: #999; --line: #333; --accent: #7fa4ff; --unsure: #d4a800; --unsure-text: #e8c547; } }
 body { font: 18px/1.4 system-ui, sans-serif; color: var(--fg); background: var(--bg); margin: 0 auto; max-width: 40rem; padding: 1rem; }
 a { color: var(--accent); }
 .muted { color: var(--muted); font-size: 0.9em; }
@@ -168,6 +173,10 @@ textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 0.6rem; 
 .forget { position: sticky; bottom: 0; background: var(--bg); border-top: 1px solid var(--line); padding: 0.5rem 0; }
 .forget input { padding: 0.4rem; }
 .forget .row button { font-size: 0.85em; padding: 0.5rem; }
+.forget .picks button { margin-top: 0; padding: 0.3rem; }
+.picks[hidden] { display: none; }
+.turn.unsure { border-left: 4px solid var(--unsure); padding-left: 0.4rem; }
+.unsure-why { color: var(--unsure-text); font-size: 0.85em; }
 mark { background: color-mix(in srgb, var(--accent) 35%, transparent); color: inherit; }
 .release button { margin-top: 0; }
 section { margin-bottom: 2rem; }
@@ -207,7 +216,9 @@ document.addEventListener('submit', async event => {
 
 # Plays the conversation from a turn's time, and marks the turn being heard.
 # Without scripts a turn's time links to its own clip.
-TRANSCRIPT_HELP = "Tap a time to play from there. To throw out a stretch, check its first and last turns."
+TRANSCRIPT_HELP = ("Tap a time to play from there. To throw out turns, check them: All not me and All media check"
+                   " those Hearsay is sure of, never the ones marked yellow, and Check between fills in a stretch"
+                   " from the first checked to the last.")
 
 # Each conversation has its own player, and one playing stops the others.
 TRANSCRIPT_SCRIPT = """
@@ -220,6 +231,18 @@ document.addEventListener('click', event => {
   if (player.readyState) player.currentTime = seconds;
   else player.addEventListener('loadedmetadata', () => { player.currentTime = seconds; }, {once: true});
   player.play();
+});
+// The quick picks check turns, adding to those already checked.
+document.querySelectorAll('.picks').forEach(row => { row.hidden = false; });
+document.addEventListener('click', event => {
+  const button = event.target.closest('.picks button');
+  if (!button) return;
+  const boxes = [...button.closest('section').querySelectorAll('li.turn input[type=checkbox]')];
+  if (button.value === 'none') boxes.forEach(box => { box.checked = false; });
+  else if (button.value === 'between') {
+    const checked = boxes.map(box => box.checked), first = checked.indexOf(true), last = checked.lastIndexOf(true);
+    boxes.forEach((box, i) => { if (first >= 0 && i >= first && i <= last) box.checked = true; });
+  } else boxes.forEach(box => { if (box.closest('li').dataset.pick === button.value) box.checked = true; });
 });
 document.addEventListener('submit', event => {
   const ask = {whole: 'Throw out this whole conversation?',
@@ -359,6 +382,29 @@ def who(label: str | None, category: str | None, basis: str | None, voice: str |
     if found[0] == "unknown":
         return "Not sure"
     return f"Not me · {voice}" if voice else "Not me"
+
+
+def pick(label: str | None, category: str | None, basis: str | None, similarity: float | None,
+         media: float | None) -> tuple[str | None, str | None]:
+    """Which of a conversation page's quick picks checks a turn (notme or
+    media), or why neither does: a turn either could be wrong about is left
+    unchecked and marked, since throwing out someone talking is worse than
+    keeping some TV. The operator's tags are sure. Unsure: Hearsay couldn't
+    tell who spoke; it's not the owner only by its diarized speaker and its
+    own voice is no further from the owner's than an unsure one; or it
+    sounds somewhat like tagged media, under the hint that takes it out."""
+    if category == "_media":
+        return "media", None
+    if category is None:
+        owner_by_ear = label == "owner" and basis in ("voice", "channel")
+        if media is not None and MEDIA_UNSURE <= media < HINT and not owner_by_ear:
+            return None, "Might be media"
+        if label is None:
+            return None, "Not sure who spoke"
+        if label == "not_owner" and basis == "diarization" and similarity is not None and similarity > NOT_OWNER_THRESHOLD:
+            return None, "Not me by its speaker, but its voice is close to yours"
+    found = speaker_kind(label, category, basis)
+    return ("notme" if found and found[0] not in ("owner", "unknown") else None), None
 
 
 def coordinates(text: str) -> tuple[float, float] | None:
@@ -658,8 +704,9 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
         zero = datetime.fromisoformat(zero_at).timestamp()
         here = places.get(conversation_id, [])
         turns = db.execute(
-            "SELECT t.turn_id, t.idx, t.start, t.end, t.text, t.diar_speaker, ts.label, ts.basis FROM turns t"
-            " JOIN turn_speakers ts USING (turn_id) WHERE t.conversation_id = ? ORDER BY t.start, t.idx",
+            "SELECT t.turn_id, t.idx, t.start, t.end, t.text, t.diar_speaker, ts.label, ts.basis, ts.owner_similarity,"
+            " tm.score FROM turns t JOIN turn_speakers ts USING (turn_id) LEFT JOIN turn_media tm USING (turn_id)"
+            " WHERE t.conversation_id = ? ORDER BY t.start, t.idx",
             (conversation_id,)).fetchall()
         applied = db.execute("SELECT start, end, reason FROM forgotten WHERE conversation_id = ?",
                              (conversation_id,)).fetchall()
@@ -680,7 +727,7 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
                             f" value='{html.escape('|'.join(m['at']))}'>Undo</button></li>") for m in pending])
         voices = {}  # diarized speaker -> A, B, ... in order of first turn
         lines, last_place = [], None
-        for turn_id, idx, turn_start, turn_end, text, voice, label, basis in turns:
+        for turn_id, idx, turn_start, turn_end, text, voice, label, basis, similarity, media in turns:
             at = zero + turn_start
             while notes and notes[0][0] <= at:
                 lines.append(notes.pop(0)[1])
@@ -692,11 +739,17 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
                 voices[voice] = letters(len(voices))
             speaker = who(label, tagged_as.get(turn_id), basis, voices.get(voice))
             going = any(m["start"] < zero + turn_end and at < m["end"] for m in pending)
+            picked, unsure = pick(label, tagged_as.get(turn_id), basis, similarity, media)
+            kind = " left" if going or speaker.startswith("Left out") else ""
+            kind += " unsure" if unsure else ""
             lines.append(
-                f"<li id='{html.escape(conversation_id)}-{idx}' class='turn{' left' if going or speaker.startswith('Left out') else ''}'"
-                f" data-start='{turn_start:.2f}'><input type='checkbox' name='turn_id' value='{html.escape(turn_id)}'"
+                f"<li id='{html.escape(conversation_id)}-{idx}' class='turn{kind}' data-start='{turn_start:.2f}'"
+                + (f" data-pick='{picked}'" if picked and not going else "")
+                + f"><input type='checkbox' name='turn_id' value='{html.escape(turn_id)}'"
                 f" aria-label='Choose'><a class='at' href='/audio/{quote(turn_id)}'>{clock(at)}</a> "
-                f"<span class='muted'>{html.escape(speaker)}</span><div>{marked(text, query)}</div></li>")
+                f"<span class='muted'>{html.escape(speaker)}</span>"
+                + (f" <span class='unsure-why'>{html.escape(unsure)}</span>" if unsure else "")
+                + f"<div>{marked(text, query)}</div></li>")
         lines += [note for _, note in notes]
         player = (f"<div class='player'><audio controls preload='none'"
                   f" src='/conversations/{quote(conversation_id)}/audio'></audio></div>" if wav_file else
@@ -718,7 +771,11 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
 <div class="forget">
   <input name="reason" maxlength="{REASON_CHARACTERS}" autocomplete="off"
          placeholder="Why (optional; Idea Machine sees it)" aria-label="Why">
-  <div class="row"><button type="submit" name="action" value="stretch">Throw out checked</button>
+  <div class="row picks" hidden><button type="button" value="notme">All not me</button>
+  <button type="button" value="media">All media</button>
+  <button type="button" value="between">Check between</button>
+  <button type="button" value="none">None</button></div>
+  <div class="row"><button type="submit" name="action" value="checked">Throw out checked</button>
   <button type="submit" name="action" value="whole">Throw out all</button></div>
 </div>
 </form>
@@ -797,8 +854,10 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
 
     @app.post("/forget")
     async def throw_out(request: Request) -> Response:
-        """Throw out from the first turn checked to the last, or the whole
-        conversation: a mark by absolute time, which a reprocess applies."""
+        """Throw out the turns checked, or the whole conversation: marks by
+        absolute time, which a reprocess applies. Turns checked one after
+        another make one mark, so a stretch checked through is one mark; the
+        turns left unchecked between them are kept."""
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
         form = parse_qs((await request.body()).decode())
@@ -810,11 +869,10 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
         try:
             conversation = db.execute("SELECT start, end FROM conversations WHERE conversation_id = ?",
                                       (conversation_id,)).fetchone()
-            spans = [(datetime.fromisoformat(zero_at).timestamp() + s, datetime.fromisoformat(zero_at).timestamp() + e)
-                     for turn_id, zero_at, s, e in db.execute(
-                         "SELECT t.turn_id, ca.zero_at, t.start, t.end FROM turns t"
-                         " JOIN conversation_audio ca USING (conversation_id) WHERE t.conversation_id = ?",
-                         (conversation_id,)) if turn_id in chosen]
+            turns = db.execute(
+                "SELECT t.turn_id, ca.zero_at, t.start, t.end FROM turns t JOIN conversation_audio ca"
+                " USING (conversation_id) WHERE t.conversation_id = ? ORDER BY t.start, t.idx",
+                (conversation_id,)).fetchall()
         finally:
             db.close()
         if conversation is None:
@@ -822,10 +880,19 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
         if action == "whole":
             append_tag({"type": "forget", "at": whole_seconds(*conversation), "reason": reason},
                        labels_dir / "forget.jsonl")
-        elif action == "stretch" and spans:
-            span = (min(s for s, _ in spans), max(e for _, e in spans))
-            append_tag({"type": "forget", "at": [datetime.fromtimestamp(t, timezone.utc).isoformat() for t in span],
-                        "reason": reason}, labels_dir / "forget.jsonl")
+        elif action == "checked":
+            runs, run = [], []
+            for turn_id, zero_at, start, end in turns + [(None, None, None, None)]:
+                if turn_id in chosen:
+                    zero = datetime.fromisoformat(zero_at).timestamp()
+                    run.append((zero + start, zero + end))
+                elif run:
+                    runs.append(run)
+                    run = []
+            for run in runs:
+                span = (min(s for s, _ in run), max(e for _, e in run))
+                append_tag({"type": "forget", "at": [datetime.fromtimestamp(t, timezone.utc).isoformat() for t in span],
+                            "reason": reason}, labels_dir / "forget.jsonl")
         return go_back(form)
 
     @app.post("/release")

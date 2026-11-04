@@ -224,6 +224,42 @@ def test_conversations_narrow_to_a_place_and_to_words_said_and_read_in_order(por
     assert client.get("/conversations/c1/audio").status_code == 401
 
 
+def test_all_not_me_and_all_media_mark_the_turns_hearsay_is_sure_of_and_leave_the_rest_yellow(portal):
+    from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
+
+    client, db_path, labels_dir = portal
+    log_in(client)
+    db = sqlite3.connect(db_path)
+    db.executescript(CONVERSATIONS_SCHEMA)
+    db.execute("INSERT INTO conversations VALUES ('c1', 1767225600, 1767225640, 32, 0)")
+    db.execute("INSERT INTO turn_media VALUES ('b3', 0.95)")  # media
+    db.execute("INSERT INTO turn_media VALUES ('b5', 0.6)")  # might be
+    # b1 and b7 aren't the owner only by their speaker: b1 too short to say by its own voice,
+    # b7's own voice close to the owner's. The operator tags a6, which Hearsay couldn't decide.
+    db.execute("UPDATE turn_speakers SET basis = 'diarization', owner_similarity = NULL WHERE turn_id = 'b1'")
+    db.execute("UPDATE turn_speakers SET basis = 'diarization', owner_similarity = 0.3 WHERE turn_id = 'b7'")
+    db.commit()
+    db.close()
+    client.post("/turn", data={"turn_id": "a6", "category": "_stranger"})
+    record_operator_input(db_path, labels_dir)
+
+    page = client.get("/conversations/c1").text
+    picks = dict(re.findall(r"id='c1-(\d)' class='turn[^']*' data-start='[\d.]+' data-pick='(\w+)'", page))
+    assert picks == {"1": "notme", "3": "media", "6": "notme"}
+    unsure = dict(re.findall(r"id='c1-(\d)' class='turn[^']* unsure'.*?<span class='unsure-why'>([^<]+)", page))
+    assert unsure == {"0": "Not sure who spoke", "2": "Not sure who spoke", "4": "Not sure who spoke",
+                      "5": "Might be media", "7": "Not me by its speaker, but its voice is close to yours"}
+    assert "<button type=\"button\" value=\"notme\">All not me</button>" in page
+
+    # Throwing out what All not me checked keeps the turns between them.
+    client.post("/forget", data={"conversation_id": "c1", "action": "checked", "turn_id": ["b1", "a6"]})
+    marks = [json.loads(line)["at"] for line in (labels_dir / "forget.jsonl").read_text().splitlines()]
+    assert marks == [["2026-01-01T00:00:05+00:00", "2026-01-01T00:00:09+00:00"],
+                     ["2026-01-01T00:00:30+00:00", "2026-01-01T00:00:34+00:00"]]
+    page = client.get("/conversations/c1").text
+    assert "data-pick='notme'" not in page.split("id='c1-2'")[0]  # b1, going, is checked by nothing again
+
+
 def test_turns_hearsay_couldnt_decide_are_offered_and_the_operator_s_tag_decides(portal):
     from hearsay.stream import write_stream
     from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
@@ -340,14 +376,17 @@ def test_a_stretch_thrown_out_leaves_the_stream_and_is_final_once_a_reprocess_ap
     def said() -> list[str]:
         return [json.loads(line)["utterance_id"] for line in (stream / "conversations/c1.jsonl").read_text().splitlines()]
 
-    # The first and last turns checked, a2 at 10 s and a4 ending at 24 s, take b3 between them.
-    page = throw_out("stretch", "a4", "a2")
+    # Turns checked apart are thrown out each on its own, and the turn between them is kept.
+    page = throw_out("checked", "a4", "a2")
+    assert "To throw out 00:00:10–00:00:14 · too personal" in page and "To throw out 00:00:20–00:00:24" in page
+    assert page.count("class='turn left") == 2 and "id='c1-3' class='turn' " in page
+    for undo in re.findall(r"name='at' value='([^']+)'>Undo", page):
+        page = client.post("/forget/undo", data={"conversation_id": "c1", "at": html.unescape(undo)}).text
+    assert "To throw out 00:" not in page and "class='turn left" not in page
+    # Checked one after another, a2 at 10 s through a4 ending at 24 s, they're one stretch.
+    page = throw_out("checked", "a2", "b3", "a4")
     assert "To throw out 00:00:10–00:00:24 · too personal at the next reprocess" in page
-    assert page.count("class='turn left'") == 3
     undo = re.search(r"name='at' value='([^']+)'>Undo", page)[1]
-    page = client.post("/forget/undo", data={"conversation_id": "c1", "at": html.unescape(undo)}).text
-    assert "To throw out 00:" not in page and "class='turn left'" not in page
-    throw_out("stretch", "a2", "a4")
 
     index = reprocess()
     assert said() == ["c1:0000", "c1:0001", "c1:0005", "c1:0006", "c1:0007"]
