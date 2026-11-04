@@ -272,9 +272,9 @@ Decided 2026-11-04:
 - The invariants change to: raw payloads past the window are deleted, and
   a conversation past it re-runs from its record only.
 - The window is 90 days to start, shortened by the operator as time goes on.
-- The audio models are good enough to fix their output for good: their
-  rare misses are outweighed, once Idea Machine's extraction reads the
-  turns, by what keeping the audio costs.
+- The audio models are good enough to fix their output for good: they
+  have rare misses, but are very good overall once Idea Machine's
+  extraction reads the turns.
 - A thrown-out stretch's audio and raw payloads are deleted when its
   conversation seals (a week after it ends), not after the window.
 - Gone means past the NAS's snapshots too: `fast` keeps nightly snapshots
