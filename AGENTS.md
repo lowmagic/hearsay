@@ -54,10 +54,8 @@ stream as music (`hearsay/music.py`). Its done-when is checked by listening
 to new capture on slice 20's conversation page, built first for that. Slice
 20 (throw out what was said, and hold the stream two weeks) is built too,
 and is done once the operator has reviewed two weeks on it. Slice 19 (turns
-kept without their audio) is built: a conversation seals a week after it
-ends, and reprocess takes it from its record. It's done once `python -m
-hearsay.records check` says a build from records equals one from raw on the
-NAS. Next, slice 12 (retention), which changes the invariants on raw
+kept without their audio) is done (2026-11-04): a conversation seals a week
+after it ends, and reprocess takes it from its record. Next, slice 12 (retention), which changes the invariants on raw
 payloads and re-running from raw. Slice 12 also waits for Idea Machine's M2, which validates me / not me.
 Every slice, done or shelved, and what was measured for it is in the
 [roadmap](docs/roadmap.md).

@@ -529,6 +529,13 @@ Decided 2026-11-02 (`hearsay/records.py`):
   its cache (`db/capture-pcm`, `db/imports-pcm`), which is most of the 6 GB
   there.
 
+Done 2026-11-04: `python -m hearsay.records check` on the NAS said a build
+from records is the same as one from raw. The line was at 2026-10-28 05:39,
+with 72 of 85 conversations (15,038 of 16,511 turns) sealed; the build from
+records read 768 uploads (9 hours) against 3,462 (42 hours) and no imports,
+and wrote no WAVs. "Reads no audio" holds behind the line: the last week's
+audio is still read on every reprocess, as decided above.
+
 ## 20. Throw out what was said, and hold the stream two weeks
 
 The operator can't take anything back once it's said near the pendant: it
