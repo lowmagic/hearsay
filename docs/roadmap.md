@@ -60,7 +60,7 @@ The portal plays the turns Hearsay couldn't decide, and the operator tags
 each Me, Someone else, or not speech. Checked by ear the same day on
 Hearsay's own turns: an owner turn by voice was right 49 of 49 times, one by
 diarization 147 of 162 (the misses are short interjections). Idea Machine's
-M2 validates me / not me with these.
+M2 validates me / not me with these. It did, 2026-11-01 (its B5 passed).
 
 
 ## 6. Local transcription (WhisperX)
@@ -240,7 +240,9 @@ in `mac/`); calls under 30 s of speech are dropped like any conversation.
 ## 12. Retention
 
 Held 2026-10-28 until Idea Machine's M2 validates me / not me: raw audio is
-the rollback for its re-link of segments.
+the rollback for its re-link of segments. Lifted 2026-11-04: M2 was
+validated 2026-11-01 (its B5 passed), and Idea Machine no longer needs raw
+audio as a rollback. Retention still waits for slice 20.
 
 Delete non-owner audio after embedding and transcription. Starts only
 once the models are tuned (diarization, voice thresholds, clustering): until
