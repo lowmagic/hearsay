@@ -450,11 +450,12 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Pat
         # The iPhone app's own screens (GET /places.json) send the capture token on each request.
         sent = request.headers.get("authorization", "")
         if app_token and sent.startswith("Bearer "):
-            return hmac.compare_digest(sent.removeprefix("Bearer ").encode(), app_token.encode())
+            return hmac.compare_digest(sent.encode(), f"Bearer {app_token}".encode())
         expires, _, signature = request.cookies.get(COOKIE, "").partition(".")
-        if not expires.isdigit() or int(expires) < time.time():
+        # Bytes: a cookie can hold any character, and one that isn't ASCII is just not a session.
+        if not (expires.isascii() and expires.isdigit()) or int(expires) < time.time():
             return False
-        return hmac.compare_digest(signature, sign(int(expires)))
+        return hmac.compare_digest(signature.encode(), sign(int(expires)).encode())
 
     def connect() -> sqlite3.Connection:
         return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -532,8 +533,9 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Pat
 
     @app.post("/login/app")
     async def app_login(request: Request) -> Response:
-        sent = request.headers.get("authorization", "").removeprefix("Bearer ")
-        if not app_token or not hmac.compare_digest(sent.encode(), app_token.encode()):
+        # The whole header, so a token sent without its scheme isn't one.
+        sent = request.headers.get("authorization", "")
+        if not app_token or not hmac.compare_digest(sent.encode(), f"Bearer {app_token}".encode()):
             await asyncio.sleep(1)
             return Response(status_code=401)
         return session()
@@ -919,7 +921,11 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
             return RedirectResponse("/login", status_code=303)
         form = parse_qs((await request.body()).decode())
         at = form.get("at", [""])[0].split("|")
-        if len(at) == 2 and not applied(at):
+        try:
+            final = applied(at)
+        except ValueError:  # not two times, so no mark of the page's: write nothing
+            return go_back(form)
+        if not final:
             append_tag({"type": "undo", "at": at}, labels_dir / "forget.jsonl")
         return go_back(form)
 
@@ -1067,9 +1073,11 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
         places_path = labels_dir / "places.jsonl"
         def radius(text: str, default: float = RADIUS) -> float:
             try:
-                return min(max(float(text), MIN_RADIUS), MAX_RADIUS)
+                r = float(text)
             except ValueError:
                 return default
+            # NaN would pass the bounds, and infinity isn't an area anyone set.
+            return min(max(r, MIN_RADIUS), MAX_RADIUS) if math.isfinite(r) else default
 
         def place(name: str, lat: float, lon: float, r: float) -> dict:
             # Only a radius the operator set is written, so the default can still change.
@@ -1082,7 +1090,7 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
         elif action == "rename" and name and field("from") and name != field("from"):
             append_tag({"type": "rename", "from": field("from"), "to": name}, places_path)
         elif action in ("ignore", "unignore"):
-            # The coordinates as the page showed them, so "Offer again" matches exactly.
+            # As posted: the app sends a spot's centre in full, the page to 6 decimals (hearsay.places.read_ignored).
             append_tag({"type": action, "latitude": float(field("latitude")),
                         "longitude": float(field("longitude"))}, places_path)
         elif action == "forget" and field("from"):

@@ -1,3 +1,4 @@
+import asyncio
 import html
 import io
 import json
@@ -6,6 +7,7 @@ import sqlite3
 import time
 import wave
 
+import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
@@ -105,8 +107,12 @@ def test_only_the_right_username_and_password_or_a_live_signed_session_log_in(po
     for username, password in (("me", "nope"), ("you", "correct horse")):
         wrong = client.post("/login", data={"username": username, "password": password}, follow_redirects=False)
         assert wrong.status_code == 200 and "set-cookie" not in wrong.headers
-    client.cookies.set("hearsay_session", "9999999999.forged")
-    assert client.get("/", follow_redirects=False).status_code == 303
+    # Forged, or not even ASCII: no session. Sent as raw bytes, as a browser can; the test client would make them UTF-8.
+    async def get(cookie: bytes) -> httpx2.Response:
+        async with httpx2.AsyncClient(transport=httpx2.ASGITransport(app=client.app), base_url="http://testserver") as raw:
+            return await raw.get("/", headers={"Cookie": b"hearsay_session=" + cookie})
+    for forged in (b"9999999999.forged", "9999999999.é".encode(), "².forged".encode("latin-1")):
+        assert asyncio.run(get(forged)).headers["location"] == "/login"
 
     client.cookies.clear()
     assert log_in(client).status_code == 303
@@ -122,9 +128,11 @@ def test_only_the_right_username_and_password_or_a_live_signed_session_log_in(po
 
 def test_the_app_logs_in_with_the_capture_token(portal, tmp_path):
     client, db_path, labels_dir = portal
-    for wrong in ({}, {"Authorization": "Bearer nope"}):
+    # The token alone, without its scheme, isn't the app.
+    for wrong in ({}, {"Authorization": "Bearer nope"}, {"Authorization": "capture-token"}):
         response = client.post("/login/app", headers=wrong, follow_redirects=False)
         assert response.status_code == 401 and "set-cookie" not in response.headers
+        assert client.get("/places.json", headers=wrong).status_code == 401
     response = client.post("/login/app", headers={"Authorization": "Bearer capture-token"}, follow_redirects=False)
     assert response.status_code == 303
     assert client.get("/", follow_redirects=False).status_code == 200
@@ -222,6 +230,17 @@ def test_a_spot_where_the_owner_spent_time_can_be_named(portal):
     assert visit["readings"] == [1_767_225_590, 1_767_225_830]
     client.post("/places", headers=app, data={"action": "drop", "start": "1767225590", "end": "1767225830"})
     assert client.get("/places.json", headers=app).json()["visits"] == {}
+
+
+@pytest.mark.parametrize("radius", ["nan", "inf", "-inf", "wide"])
+def test_a_radius_that_isnt_a_number_of_metres_keeps_the_area(portal, radius):
+    client, _, labels_dir = portal
+    log_in(client)
+    client.post("/places", data={"action": "name", "name": "Back Room", "latitude": "-26.12", "longitude": "80.14", "radius": radius})
+    assert read_places(labels_dir) == [("Back Room", -26.12, 80.14, 100.0)]
+    client.post("/places", data={"action": "move", "from": "Back Room", "at": ["-26.12,80.14", "-26.13,80.15"],
+                                 "radius": ["400", radius]})
+    assert read_places(labels_dir) == [("Back Room", -26.12, 80.14, 400.0), ("Back Room", -26.13, 80.15, 100.0)]
 
 
 def test_each_clip_shows_its_words_and_when_and_where_it_was_said(portal):
@@ -492,6 +511,16 @@ def test_a_stretch_thrown_out_leaves_the_stream_and_is_final_once_a_reprocess_ap
         "2026-01-01T00:00:10.000Z", "2026-01-01T00:00:00.000Z"]
 
 
+@pytest.mark.parametrize("at", ["yesterday|today", "2026-01-01T00:00:00+00:00|soon", "2026-01-01T00:00:00+00:00"])
+def test_taking_back_a_mark_that_isnt_two_times_writes_nothing(portal, at):
+    client, _, labels_dir = portal
+    log_in(client)
+    before = {p: p.read_bytes() for p in labels_dir.rglob("*") if p.is_file()}
+    response = client.post("/forget/undo", data={"conversation_id": "c1", "at": at}, follow_redirects=False)
+    assert response.status_code == 303
+    assert {p: p.read_bytes() for p in labels_dir.rglob("*") if p.is_file()} == before
+
+
 def test_a_tag_can_be_undone_and_the_page_s_script_gets_no_page_back(portal):
     client, _, labels_dir = portal
     script = {"X-Requested-With": "fetch"}
@@ -579,14 +608,23 @@ def test_a_spot_that_isnt_a_place_stops_being_offered(portal):
     log_in(client)
     db = sqlite3.connect(db_path)
     db.executescript(CONVERSATIONS_SCHEMA + PLACES_SCHEMA)
-    db.executemany("INSERT INTO locations VALUES ('p', ?, -26.12, 80.14, 65)", [(1_790_000_000 + 60 * i,) for i in range(5)])
+    # Readings that wander a little, so the spot's centre has more decimals than the page shows.
+    db.executemany("INSERT INTO locations VALUES ('p', ?, ?, 80.14, 65)",
+                   [(1_790_000_000 + 60 * i, -26.12 - 0.0000003 * i) for i in range(5)])
     db.commit()
     db.close()
 
-    client.post("/places", data={"action": "ignore", "latitude": "-26.120000", "longitude": "80.140000"})
+    # The app says it isn't a place, with its centre as /places.json gave it.
+    app = {"Authorization": "Bearer capture-token"}
+    [spot] = client.get("/places.json", headers=app).json()["unnamed"]
+    client.post("/places", headers=app, data={"action": "ignore", "latitude": str(spot["latitude"]),
+                                              "longitude": str(spot["longitude"])})
     page = client.get("/places").text
     assert "Nowhere new." in page and "Not places (1)" in page
-    client.post("/places", data={"action": "unignore", "latitude": "-26.120000", "longitude": "80.140000"})
+    # The page offers it again as it shows it.
+    shown = dict(re.findall(r"name='(latitude|longitude)' value='([^']+)'", page))
+    assert shown["latitude"] != str(spot["latitude"])
+    client.post("/places", data={"action": "unignore", **shown})
     assert "About 5 min" in client.get("/places").text
 
 

@@ -21,7 +21,8 @@ labels/places.jsonl, one record per line:
     {"type": "ignore", "latitude", "longitude"}  not a place: readings near it
         are no longer offered for naming (a road, a friend's street). Never
         reaches the stream, which only names named places.
-    {"type": "unignore", "latitude", "longitude"}  offered again
+    {"type": "unignore", "latitude", "longitude"}  offered again: each ignore
+        at the same spot to 6 decimals
     {"type": "drop", "start", "end"}  the readings in that span (unix seconds)
         were wrong: they count for no place, now or once circles change
     {"type": "at", "start", "end", "name"}  the readings in that span were at
@@ -92,7 +93,10 @@ def read_ignored(labels_dir: Path) -> list[tuple[float, float]]:
         if record["type"] == "ignore":
             ignored.append((record["latitude"], record["longitude"]))
         elif record["type"] == "unignore":
-            ignored = [s for s in ignored if s != (record["latitude"], record["longitude"])]
+            # To the 6 decimals (~0.1 m) the portal's page shows: the app ignores
+            # a spot by its centre in full, the page offers it again as shown.
+            spot = (round(record["latitude"], 6), round(record["longitude"], 6))
+            ignored = [s for s in ignored if (round(s[0], 6), round(s[1], 6)) != spot]
     return ignored
 
 
