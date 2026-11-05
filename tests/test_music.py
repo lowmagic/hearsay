@@ -1,30 +1,37 @@
 import sqlite3
 
 from hearsay import music
-from hearsay.assemble import SCHEMA as ASSEMBLE_SCHEMA
-from hearsay.records import SCHEMA as RECORDS_SCHEMA
+from hearsay.assemble import assemble
+from hearsay.parse import rebuild
 from hearsay.turns import SCHEMA as TURNS_SCHEMA
+from test_assemble import T, add_conversations, audio_burst, seconds
 
 
 def test_only_turns_long_enough_with_enough_audio_are_scored(tmp_path, monkeypatch):
-    db_path = tmp_path / "h.sqlite"
+    raw, db_path, audio_dir = tmp_path / "raw", tmp_path / "h.sqlite", tmp_path / "audio"
+    audio_dir.mkdir()
+    # Audio for [0, 10) and [15, 20) s after T: the burst between was lost.
+    audio_burst(raw, 0, seconds(5))
+    audio_burst(raw, 1, seconds(10))
+    audio_burst(raw, 3, seconds(20))
+    rebuild(raw, db_path)
+    add_conversations(db_path, [("c1", T.timestamp(), seconds(20).timestamp(), 15.0, 0)])
+    assemble(raw, db_path, audio_dir)
     db = sqlite3.connect(db_path)
-    db.executescript(TURNS_SCHEMA + ASSEMBLE_SCHEMA + RECORDS_SCHEMA + music.SCHEMA)
-    db.execute("INSERT INTO conversation_audio VALUES ('c1', '2026-09-21T14:13:20+00:00', 100, 1, 'c1.wav', 'sha', 0)")
-    # (start, end, fraction of it received)
-    turns = [(0.0, 5.0, 0.9), (10.0, 15.0, 0.5), (20.0, 20.4, 1.0)]
-    for idx, (start, end, _) in enumerate(turns):
-        db.execute("INSERT INTO turns VALUES (?, 'c1', ?, ?, ?, 'words', 'S0', 0.9)", (f"c1:{idx:04d}", idx, start, end))
+    db.executescript(TURNS_SCHEMA)
+    db.executemany("INSERT INTO turns VALUES (?, 'c1', ?, ?, ?, 'words', 'S0', 0.9)", [
+        ("c1:0000", 0, 1.0, 6.0),    # all received
+        ("c1:0001", 1, 8.0, 13.0),   # 2 of its 5 s received
+        ("c1:0002", 2, 16.0, 16.4),  # received, but too short to judge
+    ])
     db.commit()
     db.close()
-    zero = music.timestamp("2026-09-21T14:13:20+00:00")
-    coverage = {start: received for start, _, received in turns}
-    monkeypatch.setattr(music, "place_bursts", lambda db: [])
-    monkeypatch.setattr(music, "cut", lambda raw_dir, bursts, start, duration: (b"", coverage[start - zero]))
+    scored = []
     monkeypatch.setattr(music, "load_model", lambda model_dir: "model")
-    monkeypatch.setattr(music, "score", lambda model, pcm, cache=None: (0.1, 0.2, 0.7))
+    monkeypatch.setattr(music, "score", lambda model, pcm, cache=None: scored.append(len(pcm)) or (0.1, 0.2, 0.7))
 
-    assert music.score_music(tmp_path / "raw", db_path, tmp_path / "model")["scored"] == 1
+    assert music.score_music(raw, db_path, tmp_path / "model")["scored"] == 1
     db = sqlite3.connect(db_path)
     assert db.execute("SELECT * FROM turn_music").fetchall() == [("c1:0000", 0.1, 0.2, 0.7)]
     db.close()
+    assert scored == [5 * 32000]  # the 5 s turn's audio, cut from what was received
