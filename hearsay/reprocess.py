@@ -64,16 +64,17 @@ def report(title: str, counts: dict) -> None:
 
 
 DIRS = ("raw_dir", "db", "audio_dir", "labels_dir", "model_dir", "transcripts_dir", "imports_dir", "stream_dir",
-        "affect_model_dir", "music_model_dir", "records_dir")
+        "affect_model_dir", "music_model_dir", "records_dir", "pcm_dir")
 
 
-# Decoded audio is derived, so it's cached next to the database.
+# Decoded audio is input audio, backed up like it rather than like the
+# database, so it's kept apart from the database (its own dataset on the NAS).
 def imports_pcm(env: dict[str, Path]) -> Path:
-    return env["db"].parent / "imports-pcm"
+    return env["pcm_dir"] / "imports"
 
 
 def capture_pcm(env: dict[str, Path]) -> Path:
-    return env["db"].parent / "capture-pcm"
+    return env["pcm_dir"] / "capture"
 
 
 @contextmanager

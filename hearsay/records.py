@@ -367,9 +367,9 @@ def check(env: dict[str, Path]) -> int:
 
 
 def main() -> None:
-    env = {name: Path(os.environ[f"HEARSAY_{name.upper()}"]) for name in
-           ("raw_dir", "db", "audio_dir", "labels_dir", "model_dir", "transcripts_dir", "imports_dir",
-            "stream_dir", "affect_model_dir", "music_model_dir", "records_dir")}
+    from hearsay.reprocess import DIRS
+
+    env = {name: Path(os.environ[f"HEARSAY_{name.upper()}"]) for name in DIRS}
     if sys.argv[1:2] == ["unseal"] and len(sys.argv) == 3:
         before = datetime.fromisoformat(sys.argv[2]).astimezone().timestamp()
         print(unseal(env["records_dir"], before))
