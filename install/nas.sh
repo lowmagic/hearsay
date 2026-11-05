@@ -288,16 +288,20 @@ def run():
     """Take each dataset's first snapshot and replica now, so the new backups
     exist before the old ones are destroyed."""
     have = own_snapshot_tasks()
-    started = [d for d in AUDIO if not own_snapshots(d)]
-    for d in started:
+    # One task at a time: started together, TrueNAS can leave one PENDING
+    # and never take its snapshot (seen on 25.10.7 with five at once).
+    for d in AUDIO:
+        if own_snapshots(d):
+            continue
         call("pool.snapshottask.run", have[d]["id"])
-    for _ in range(120):
-        if all(own_snapshots(d) for d in started):
-            break
-        time.sleep(1)
-    else:
-        sys.exit(f"ERROR: no {SCHEMA} snapshot of {', '.join(d for d in started if not own_snapshots(d))} after"
-                 " 2 minutes. See Data Protection -> Periodic Snapshot Tasks in the TrueNAS UI.")
+        for _ in range(60):
+            if own_snapshots(d):
+                break
+            time.sleep(1)
+        else:
+            sys.exit(f"ERROR: no {SCHEMA} snapshot of {d} after a minute."
+                     " See Data Protection -> Periodic Snapshot Tasks in the TrueNAS UI.")
+        print(f"snapshot: {own_snapshots(d)[-1]}")
     replication = own_replication()
     if not unreplicated(replication):
         print(f"snapshots exist and are replicated to {REPLICA}")
