@@ -320,8 +320,9 @@ Decided 2026-11-05, with the operator:
   on stored vectors and can be retuned at any time. Only a new
   transcription, diarization or speaker model is limited to the window.
   Owner threshold lowered from 0.40 to 0.30 on 2026-11-06 (slice 5).
-- Open: words cut from a record for a stretch thrown out after sealing
-  stay in the records' and database's snapshots up to 2 months.
+- Words cut from a record for a stretch thrown out after sealing stay in
+  the records' and database's snapshots up to 2 months: accepted by the
+  operator, since the audio is what mustn't outlive its window.
 
 Discarding and retention, built 2026-11-05 (`hearsay/retention.py`), run
 at the end of every reprocess, after sealing. A word cut from a record is
