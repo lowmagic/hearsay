@@ -57,7 +57,9 @@ def test_a_failed_run_leaves_the_previous_database_and_audio_in_place(tmp_path, 
         db.close()
         return paths
 
-    assert len(referenced_pcm()) == 1
+    # Decoded audio is kept in its own directory (its own dataset on the NAS), not beside the database.
+    assert referenced_pcm() == [str(env["pcm_dir"] / "imports" / f"{digest}.pcm")]
+    assert sorted(p.name for p in env["pcm_dir"].iterdir()) == ["capture", "imports"]
 
     # More audio arrives and the import is removed, and the run fails after
     # cutting the conversation's new WAV.

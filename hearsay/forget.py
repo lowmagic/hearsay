@@ -21,8 +21,10 @@ first time it sees it, and from then on it's final there even if the mark
 is taken back, since forgotten.json never shrinks. The portal offers Undo
 only until then.
 
-The audio, raw payloads and transcripts of a thrown-out stretch are kept
-until retention (slice 12).
+Once a stretch's conversation is sealed, hearsay/retention.py silences it
+in the WAV, cuts its words from the record and transcript, and deletes the
+raw uploads and imports wholly inside it; the rest of its raw audio goes
+60 days after it ends, as all audio does.
 """
 
 import json

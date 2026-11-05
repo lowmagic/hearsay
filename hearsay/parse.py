@@ -4,7 +4,8 @@ recorder's uploads (hearsay/capture.py).
 Every run is a full rebuild: raw is the only source of truth, and the database
 is a disposable view of it. Nothing here writes to raw. An upload sealed
 behind the line (hearsay/records.py) is loaded from the rows it made when it
-was parsed, so its file, audio, isn't opened again.
+was parsed, so its file, audio, isn't opened again, and once retention has
+deleted it (hearsay/retention.py) those rows are all there is of it.
 
 Only facts stated by the payloads are stored. Live transcript fragments are not
 merged, and nothing is assigned to a conversation by inference: live transcript
@@ -220,6 +221,12 @@ def load_payloads(db: sqlite3.Connection, raw_dir: Path, sealed: dict[str, dict]
     sidecars = []
     for sidecar_path in raw_dir.glob("*/*/*.json"):
         sidecars.append((json.loads(sidecar_path.read_bytes()), sidecar_path))
+    # A sealed upload whose files are deleted (hearsay/retention.py) is loaded
+    # from its rows alone, in the place its sidecar had.
+    on_disk = {str((path.parent / sc["body_file"]).relative_to(raw_dir)) for sc, path in sidecars}
+    sidecars += [({"received_at": rows["payloads"][0][2], "body_file": Path(path).name},
+                  (raw_dir / path).with_suffix(".json"))
+                 for path, rows in (sealed or {}).items() if path not in on_disk]
     # Earliest delivery wins, so duplicate_of is stable across runs.
     sidecars.sort(key=lambda item: (item[0]["received_at"], str(item[1])))
 

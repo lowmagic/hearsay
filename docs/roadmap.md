@@ -240,7 +240,8 @@ in `mac/`); calls under 30 s of speech are dropped like any conversation.
 ## 12. Retention
 
 Held 2026-10-28 until Idea Machine's M2 validates me / not me: raw audio is
-the rollback for its re-link of segments.
+the rollback for its re-link of segments. Lifted 2026-11-01: M2 validated,
+and nothing in Idea Machine needs the audio.
 
 Delete non-owner audio after embedding and transcription. Starts only
 once the models are tuned (diarization, voice thresholds, clustering): until
@@ -264,6 +265,88 @@ it goes; who is speaking re-runs from stored vectors for good. Then all
 audio past the window is deleted, the owner's too, except the enrollment
 windows' (a few minutes, so the owner can be enrolled in a new speaker
 model). The invariants on raw payloads and re-running from raw change with it.
+
+Decided 2026-11-05, with the operator:
+
+- One boundary for sealing (slice 19), the hold (slice 20) and discarding
+  thrown-out audio: 14 days after a conversation ends to start, 7 once
+  reviewing is routine. Sealing moved from 7 days to the hold, so a Words
+  update made while reviewing reaches the conversation being read, and what
+  Idea Machine gets normally has its final transcript (extracted once).
+  Sealing comes first in a run, so the record holds every turn before any
+  audio goes. Late uploads don't hold the boundary back: of 3,830 phone
+  uploads none arrived more than 24 h after its audio began (173 after
+  6 h), and late audio unseals by itself.
+- Thrown-out stretches, at the boundary: silenced in the conversation's WAV
+  then, not before (a WAV changed before sealing would be transcribed
+  again), raw uploads and imports lying wholly inside a stretch are
+  deleted, and its words and vectors leave the conversation's record and
+  the dev box's transcript file. Uploads that only reach into a stretch stay
+  until retention, so an unseal within the window still has the audio
+  around it; their thrown-out audio (up to about a minute at each edge)
+  never reaches the stream. Raw is deleted whole, never edited. Deleting
+  every upload a stretch touches would lose neighbouring speech on unseal;
+  keeping sealed conversations with discarded audio out of unseal needs
+  per-conversation sealing, a later step if edge audio surviving to
+  retention is too much.
+- Retention: audio 60 days on (raw uploads and imports 60 days after their
+  own audio ends, the rest after its conversation does): raw uploads,
+  imports, conversation WAVs and decoded audio, the owner's too, except raw
+  covering an enrollment window, kept so the owner can be enrolled in a new
+  speaker model. Records keep every turn's words, vectors and scores
+  whatever it's tagged, so `_media`, `_music` and `_noise` tags keep
+  training the hints. Unsealing reaches back 60 days at most; an import
+  older than that is refused rather than unsealing to it.
+- The dev box's transcript files stay until retention, cut like the record
+  where something is thrown out, and go 60 days after their conversation
+  ends: `records check` compares a build from raw with them, and an unseal
+  within the window reads them again (revised 2026-11-05 from going once
+  sealed). One whose conversation no longer exists (boundaries moved during
+  the hold, or Omi's UUID-named ones) goes on any run.
+- Backups: raw, audio, imports, decoded audio (moved out of `db` to its own
+  dataset) and transcripts get their own daily snapshots kept 7 days,
+  replicated at 7 days; input audio isn't precious. Records, the database,
+  labels and the stream keep the NAS-wide 2 weeks, replicated for 2 months.
+- No tuning has to come first: thresholds and the media and music rules run
+  on stored vectors and can be retuned at any time. Only a new
+  transcription, diarization or speaker model is limited to the window.
+  Owner-threshold labels show room (100 labels: owner at 0.30 keeps
+  precision 1.00 and lifts recall from 0.78 to 0.90), with only 8 labels
+  between 0.30 and 0.40 so far.
+- Open: words cut from a record for a stretch thrown out after sealing
+  stay in the records' and database's snapshots up to 2 months.
+
+Discarding and retention, built 2026-11-05 (`hearsay/retention.py`), run
+at the end of every reprocess, after sealing. A word cut from a record is
+blanked, keeping its timing and speaker, which are all turns are cut by,
+so the turns around it are built as before. Each deleted file is logged in
+`records/deleted.jsonl` first, and a deleted upload's parsed rows (taps,
+locations) load from its digest wherever the seal line moves. Raw uploads
+and imports go 60 days after their own audio ends; a conversation's WAV and
+transcripts 60 days after it ends. Where a run
+of the pendant's audio went on across uploads deleted from a stretch, what
+follows can be placed up to a second or two differently after an unseal,
+inside the conversation that is transcribed again then anyway. `records
+check` takes records in both builds up to the last conversation audio was
+deleted or cut from, as raw can't rebuild those. The model cache drops
+entries no run has used for two weeks. `python -m hearsay.retention report`
+prints what the next run would delete, changing nothing.
+
+Built in order, each usable on its own: the boundary; discarding thrown-out
+audio and cutting it from records; retention with its guards; the datasets
+and snapshots (`install/nas.sh`).
+
+The datasets and snapshots, built 2026-11-05: decoded audio moved from `db`
+to its own dataset, `pcm`. `raw`, `audio`, `imports`, `pcm` and
+`transcripts` have their own snapshot tasks (daily, 7 days, schema
+`hearsay-%Y-%m-%d_%H-%M`) and a replication to
+`storage/hearsay-audio-replica` kept as long, and are excluded from the
+NAS-wide tasks. A task's retention only prunes datasets it covers, so the
+NAS-wide tasks would have kept what they already had of them forever:
+`nas.sh` fixes the local snapshots' removal dates when it adds the excludes,
+then lists those snapshots and the old replica datasets and destroys them
+once the operator confirms. `db`'s snapshots still hold the decoded audio
+cached there before; they age out (2 weeks local, 2 months replicated).
 
 ## 13. Where a conversation happened
 
@@ -523,9 +606,9 @@ Decided 2026-11-02 (`hearsay/records.py`):
 - Tone stays the owner's only (hearsay/affect.py: others' emotional state
   isn't inferred), so a sealed turn that becomes the owner's later, by a new
   enrollment or threshold, has no tone score.
-- Thrown-out words stay in a record's transcript until slice 12 deletes
-  them with the audio; on every reprocess they're removed after loading, as
-  from raw.
+- Thrown-out words stay in a record's transcript until slice 12 cuts them,
+  once the conversation is sealed (hearsay/retention.py); on every reprocess
+  they're removed after loading, as from raw.
 - Sealing also lets reprocess drop the decoded audio behind the line from
   its cache (`db/capture-pcm`, `db/imports-pcm`), which is most of the 6 GB
   there.
@@ -570,9 +653,10 @@ Decided 2026-10-26:
   release was the alternative: releasing early is the same either way, and
   a longer hold only delays what the operator doesn't get to.
 - The audio, raw payloads and transcription output of a thrown-out stretch
-  are kept until slice 12 deletes them. Gone means every copy: raw
-  payloads, conversation WAVs, the decoded audio and embedding cache, the
-  transcription output, and the NAS's nightly snapshots once they expire.
+  are kept until slice 12 deletes them, once its conversation is sealed.
+  Gone means every copy: raw payloads, conversation WAVs, the decoded audio
+  and embedding cache, the transcription output, and the NAS's nightly
+  snapshots once they expire.
 
 Comes before 19 and 12: it needs neither, and it is the only way to keep
 something from Claude until then.
@@ -685,3 +769,7 @@ over the rule, so the 2 talk turns stay.
 
 Done when: songs' words rarely reach the stream, and the labeled turns say
 the threshold drops almost no one talking.
+
+Done 2026-11-05: listening through new capture on the conversation pages
+(slice 20), songs' words no longer reached the stream, a session of songs
+one night was clean, and so was the audio for a dance class.

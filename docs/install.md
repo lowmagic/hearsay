@@ -25,14 +25,16 @@ kinds to those workers and check they're running.
    git clone https://github.com/junglestyle/hearsay.git /mnt/fast/repos/hearsay
    sudo /mnt/fast/repos/hearsay/install/nas.sh
    ```
-   This creates the datasets under `fast/hearsay` (the NVMe pool) and the
-   secrets, builds the images, starts the portal on the LAN
+   This creates the datasets under `fast/hearsay` (the NVMe pool) and their
+   backups, the secrets, builds the images, starts the portal on the LAN
    and tailnet and the capture receiver on the tailnet, checks that every
    captured payload reprocesses, reprocesses once, and waits for a real
    upload from the phone or Mac (on a new install it stops there; re-run it
    after step 4). The NAS must already be on your tailnet (the Tailscale
    app in the TrueNAS UI). Before you run it, the Apps pool must be set in
-   the TrueNAS UI. The script checks this and tells you if it isn't.
+   the TrueNAS UI, and the NAS-wide backups must exist there (Data
+   Protection): a recursive periodic snapshot task and a replication task
+   for `fast`. The script checks both and tells you if they aren't.
 3. **Dev box with the GPU, as your user:** [`install/gpu.sh`](../install/gpu.sh)
    sets up transcription (Parakeet, pyannote) as a kind on the dev box's
    corral worker, which pulls new WAVs from the NAS over `ssh nas` and writes
@@ -70,6 +72,23 @@ still parsed:
 - `.body` holds the request body, byte for byte.
 - `.json` is the sidecar: timestamp, query params, headers without the
   token, size, and sha256.
+
+Each directory under `/mnt/fast/hearsay/` is a dataset of its own, backed up
+by what it holds ([`install/nas.sh`](../install/nas.sh) sets this up):
+
+- Audio, and what's made from it alone: `raw`, `imports`, `audio`
+  (conversation WAVs), `pcm` (decoded audio, a cache) and `transcripts`
+  (the dev box's, which records hold once sealed). Daily snapshots at 04:00
+  kept 7 days, replicated to `storage/hearsay-audio-replica` and kept there
+  as long. Input audio isn't precious: what it gave is kept in records, and
+  the audio itself goes at retention, so its backups don't keep it long
+  after.
+- What's kept: `records`, `db`, `labels`, `stream` and `config`. The
+  NAS-wide backups: `fast` snapshotted daily and kept 2 weeks, replicated to
+  `storage/fast-replica` and kept 2 months. These aren't Hearsay's; `nas.sh`
+  only adds the audio datasets to their excludes.
+
+The TrueNAS UI shows both under Data Protection.
 
 ## Recording from the pendant (iPhone)
 
@@ -136,17 +155,19 @@ see a half-built database and a run with nothing new writes almost nothing
 (`fast` is snapshotted nightly). Slow steps are cached by audio content in
 `db/cache.sqlite`.
 
-A conversation is sealed a week after it ends, once it's transcribed and
-every one before it is sealed ([`hearsay/records.py`](../hearsay/records.py)):
-what its audio gave (boundaries, transcript, voice embeddings, music and tone
-scores) is kept in `/mnt/fast/hearsay/records/`, and from then on reprocess
-takes it from there and never reads that audio again. So a run with nothing
-new reads only the last week's audio. Who spoke, your tags and throw-outs,
+A conversation is sealed when the two weeks Idea Machine waits for it end
+([`hearsay/hold.py`](../hearsay/hold.py)), once it's transcribed and every one
+before it is sealed ([`hearsay/records.py`](../hearsay/records.py)): what its
+audio gave (boundaries, transcript, voice embeddings, music and tone scores)
+is kept in `/mnt/fast/hearsay/records/`, and from then on reprocess takes it
+from there and never reads that audio again. So a run with nothing new reads
+only the last two weeks' audio. Who spoke, your tags and throw-outs,
 places and the stream still re-run over everything. A sealed conversation
 keeps the transcript and models it was sealed with: a Words update or a new
-model reaches it only if you unseal it, while its audio is still kept. This
-moves the seal line back to before a date, and the next reprocess redoes
-everything after it from raw:
+model reaches it only if you unseal it, while its audio is still kept: never
+more than 60 days back, nor so far that a conversation that began before
+then would be redone. This moves the seal line back to before a date, and
+the next reprocess redoes everything after it from raw:
 
 ```sh
 sudo docker compose -f /mnt/fast/repos/hearsay/install/compose.yaml run --rm reprocess python -m hearsay.records unseal 2026-10-01
@@ -155,13 +176,45 @@ sudo docker compose -f /mnt/fast/repos/hearsay/install/compose.yaml run --rm rep
 An import, or pendant audio downloaded late, that lands behind the line, or
 less than three minutes past it where its speech joins the last sealed
 conversation, unseals back to it by itself, and so does an enrollment window
-registered once the line has passed its start (so enroll from the last week's
-audio, or everything since the window is redone). To check that a build from
-the records equals a build from raw (slow: it builds the database twice, once
-reading all the audio):
+registered once the line has passed its start (so enroll from the last two
+weeks' audio, or everything since the window is redone). Anything more than
+60 days back is left out instead, and the run lists it. To check that a
+build from the records equals a build from raw (slow: it builds the
+database twice, once reading all the audio); up to the last conversation
+audio was deleted or cut from, both builds take the records, and it says so:
 
 ```sh
 sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay/install/compose.yaml run --rm reprocess python -m hearsay.records check
+```
+
+At the end of every reprocess, once it has sealed, audio is deleted from
+sealed conversations ([`hearsay/retention.py`](../hearsay/retention.py)):
+
+- A stretch you threw out, as soon as its conversation is sealed: it's
+  silenced in the conversation's WAV, its words are blanked in the record
+  and in the dev box's transcript (timings kept, so the turns around it
+  stay as they were), and raw uploads and imports wholly inside it are
+  deleted. Those that only reach into it stay until the 60 days.
+- Everything that's audio, 60 days on, yours too: each raw upload and
+  import 60 days after its own audio ends, and a conversation's WAV (its
+  page then says No audio) and transcript files 60 days after the
+  conversation ends. Raw audio and imports covering an enrollment window
+  stay, so you can be enrolled in a new speaker model. Omi's old transcript
+  and memory payloads are text and stay. The records keep every other
+  turn's words, voice vectors and scores.
+- A transcript file or failure marker whose conversation no longer exists
+  (its boundaries moved while it was held, or it's from Omi's days), on
+  any run.
+- Decoded audio goes on the run after the audio is sealed, and cached
+  model results once no run has used them for two weeks.
+
+Each deleted file is listed in `/mnt/fast/hearsay/records/deleted.jsonl`
+before it goes; the NAS's snapshots keep it until they expire. To see what
+the next reprocess would delete and cut, changing nothing (how many, how
+big, and when their audio ends):
+
+```sh
+sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay/install/compose.yaml run --rm reprocess python -m hearsay.retention report
 ```
 
 To run the whole pipeline now, enqueue it on the NAS:
@@ -180,7 +233,7 @@ sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay
 - `/mnt/fast/hearsay/db/hearsay.sqlite`: parsed payloads. Updated only if
   every payload parses; otherwise the failures are listed and the old database
   and audio are left in place. Deleting it is safe: the next run builds it
-  again from raw.
+  again from raw and the records.
 - `/mnt/fast/hearsay/audio/<conversation_id>.wav`: each conversation's audio,
   aligned so that segment times are offsets into the file. Missing audio is
   silence; the `conversation_audio` table records how each file was aligned
@@ -188,11 +241,14 @@ sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay
   audio changes, and the new one is moved in (from `audio/.staged/`) only
   once the database describing it is in place, so a failed run leaves the
   old audio too.
+- `/mnt/fast/hearsay/pcm/`: uploads and imports decoded to PCM, cached so
+  each is decoded once, and only while its conversation isn't sealed.
+  Deleting it is safe: the next run decodes them again.
 
 - Speaker embeddings and owner / not-owner labels per segment, in the
   `segment_speakers` table.
 
-Raw is mounted read-only. Members of the `apps` group can read the outputs.
+Members of the `apps` group can read the outputs.
 
 ## Owner voice (dev box, then NAS)
 
@@ -243,6 +299,8 @@ hearsay-label import ~/Downloads/omi_export.mp3 "2026-09-28 19:42"
 It is copied unchanged to `/mnt/fast/hearsay/imports/` over `ssh nas` and
 placed on the timeline at that time on the next reprocess; where it overlaps
 live audio, the live audio wins. Importing the same file twice does nothing.
+A recording that began more than 60 days ago is refused: Hearsay keeps no
+audio that old.
 
 ## Correcting who spoke (phone or any browser)
 
@@ -280,8 +338,11 @@ left for you. Check between fills in a stretch from the first turn checked
 to the last. Either way, with a few words of why if you like (Idea Machine sees
 them). Until the next reprocess (within the hour) you can undo it; then
 its words leave the stream and Hearsay's database for good, and Idea
-Machine is told to delete what it took from them. Its audio is kept until
-retention.
+Machine is told to delete what it took from them. Once the conversation is
+sealed (two weeks after it ends, or on the next reprocess if it already
+is), its audio is silenced, its words are cut from the records and
+transcripts, and the raw audio wholly inside it is deleted; raw audio that
+only reaches into it goes at 60 days with the rest (see Reprocessing).
 
 The portal's Places page lists spots where the phone recorded and no named
 place is near (how long, which days, a map link); name them there. Only these
@@ -294,7 +355,7 @@ you approved in Lattice, which Idea Machine writes to
 `/mnt/fast/ideamachine/vocab/vocab.json`. The portal only reads it. `nas.sh`
 never creates that folder, since Idea Machine's dataset mounts there: if
 it's missing, the portal starts without it and `nas.sh` says so. Each Update re-transcribes
-the conversations not yet sealed (about the last week) on the dev box's next
+the conversations not yet sealed (the last two weeks) on the dev box's next
 run, so batch your edits; to redo older ones too, unseal them (Reprocessing,
 above).
 

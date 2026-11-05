@@ -20,8 +20,10 @@ change to the stream's format or meaning updates it in the same change.
 
 ## Invariants
 
-- Raw webhook payloads are written to disk verbatim before any parsing.
-  Never modify or delete raw payloads as part of processing.
+- Raw webhook payloads are written to disk verbatim before any parsing, and
+  never modified. They're deleted only whole, and only by retention
+  (`hearsay/retention.py`): wholly inside a stretch the operator threw out,
+  once its conversation is sealed, or 60 days after their audio ends.
 - Audio never leaves Hearsay. Hearsay's boundary is the operator's home LAN
   and Tailscale tailnet: the NAS, the dev box (which has the GPU), the
   operator's Mac laptop, and the operator's phone. Audio, including non-owner
@@ -30,13 +32,17 @@ change to the stream's format or meaning updates it in the same change.
   Omi webhook receiver and its Cloudflare tunnel were retired in 2026-10)
   and never goes to third-party services or downstream consumers.
   A work machine is never used for capture and never holds audio.
-- Non-owner audio is deleted after embedding and transcription, per retention
-  policy. Owner audio may be kept.
+- Audio, the owner's and everyone else's, is deleted 60 days on: raw
+  uploads and imports 60 days after their own audio ends, a conversation's
+  WAV and transcripts 60 days after the conversation ends, decoded audio once
+  it's sealed. Raw audio covering the owner's enrollment windows is kept for
+  good, so the owner can be enrolled in a new speaker model.
 - Speaker embeddings are retained indefinitely; tagging and merging must be
   retroactive.
-- All processing must be re-runnable from raw payloads. A sealed
-  conversation re-runs from its record (`hearsay/records.py`), and from raw
-  again once unsealed, which needs its audio still kept.
+- All processing re-runs from records, and from raw within the retention
+  window. A sealed conversation re-runs from its record (`hearsay/records.py`),
+  and from raw again once unsealed, which is refused where its audio may be
+  deleted (more than 60 days back).
 - A reprocess with nothing new writes almost nothing: the database is updated
   in place (only changed rows), and a WAV is written only when its bytes
   change. Hearsay's data is on the NAS's NVMe pool, snapshotted nightly, so
@@ -49,14 +55,15 @@ Me / not me is done (2026-10-28, roadmap slice 5): Hearsay names nobody but
 the owner, and the portal plays the turns it couldn't decide for the
 operator to tag. Slice 21 is done (2026-10-30): turns that sound like the
 media the operator has tagged leave the stream as media (`hearsay/media.py`).
-Now slice 22: turns whose words are a song's, not anyone talking, leave the
-stream as music (`hearsay/music.py`). Its done-when is checked by listening
-to new capture on slice 20's conversation page, built first for that. Slice
-20 (throw out what was said, and hold the stream two weeks) is built too,
-and is done once the operator has reviewed two weeks on it. Slice 19 (turns
-kept without their audio) is done (2026-11-04): a conversation seals a week
-after it ends, and reprocess takes it from its record. Next, slice 12 (retention), which changes the invariants on raw
-payloads and re-running from raw. Slice 12 also waits for Idea Machine's M2, which validates me / not me.
+Slice 22 is done (2026-11-05): turns whose words are a song's, not anyone
+talking, leave the stream as music (`hearsay/music.py`). Slice 20 (throw out
+what was said, and hold the stream two weeks) is built, and is done once the
+operator has reviewed two weeks on it. Slice 19 (turns kept without their
+audio) is done (2026-11-04): a conversation seals when its hold ends (two
+weeks, from 2026-11-05), and reprocess takes it from its record. Now slice
+12 (retention), which changes the invariants on raw payloads and re-running
+from raw. Idea Machine's M2 validated me / not me on 2026-11-01, so it no
+longer waits for that.
 Every slice, done or shelved, and what was measured for it is in the
 [roadmap](docs/roadmap.md).
 

@@ -145,7 +145,7 @@ Hearsay reads only `term`; `source` and the optional `heard_as` are Idea Machine
 
 Nothing reaches transcription until the operator presses Update on the Words page, which commits these terms and the
 words typed there, as they are then. Every Update changes the transcription settings, so every conversation not yet
-sealed (about the last week) is transcribed again, with new `transcript_revision`s and renumbered ids;
+sealed (those still held, the last two weeks) is transcribed again, with new `transcript_revision`s and renumbered ids;
 older conversations change only when the operator unseals them.
 
 ## Forgetting
@@ -164,7 +164,9 @@ transcribed (`transcribed` false, no file). Delete what you hold from a stretch;
 conversation's revision to change.
 
 Throwing out is the operator's input, applied on every reprocess, so a re-run from raw never brings it back into the
-stream. Raw payloads and audio of a thrown-out stretch are kept until retention (roadmap slice 12) deletes them.
+stream. Hearsay deletes the stretch's audio and cuts its words from what it keeps once the conversation is sealed, two
+weeks after it ends (raw audio only partly in the stretch goes 60 days after it ends); nothing of that changes the
+stream.
 
 ## The hold
 
