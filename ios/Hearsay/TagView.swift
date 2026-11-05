@@ -49,6 +49,7 @@ private struct PortalView: UIViewRepresentable {
         configuration.allowsInlineMediaPlayback = true
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
+        view.uiDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = true
         context.coordinator.open(view)
         return view
@@ -61,7 +62,7 @@ private struct PortalView: UIViewRepresentable {
         context.coordinator.open(view)
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var home: URL
 
         // Set when the portal refused the token, so its own login page shows.
@@ -123,6 +124,21 @@ private struct PortalView: UIViewRepresentable {
         /// which leaves the tab blank until something loads it again.
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
             open(webView)
+        }
+
+        /// The portal asks before releasing a conversation or throwing a whole
+        /// one out. Without this a web view answers every confirm() with
+        /// Cancel, so those buttons did nothing.
+        func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                     initiatedByFrame frame: WKFrameInfo) async -> Bool {
+            guard var presenter = webView.window?.rootViewController else { return false }
+            while let presented = presenter.presentedViewController { presenter = presented }
+            return await withCheckedContinuation { answer in
+                let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in answer.resume(returning: false) })
+                alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in answer.resume(returning: true) })
+                presenter.present(alert, animated: true)
+            }
         }
 
         private func showError(_ webView: WKWebView, _ error: Error) {
