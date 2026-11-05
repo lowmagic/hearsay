@@ -10,7 +10,8 @@ import pytest
 
 from hearsay import capture
 from hearsay.assemble import cut, place_bursts
-from hearsay.capture import ACTION, AUDIO, BUTTON, CONNECTED, MIC, STORED, SYSTEM, load_captures
+from hearsay.capture import (ACTION, AUDIO, BUTTON, CONNECTED, MIC, STORED, SYSTEM, load_captures,
+                             remove_stale_capture_pcm)
 from hearsay.parse import rebuild
 from hearsay.speakers import by_channel, label_for, mac_channels, with_channel
 from test_assemble import T
@@ -110,14 +111,18 @@ def test_recorder_uploads_become_timed_decoded_runs(tmp_path):
     samples = struct.unpack(f"<{len(pcm) // 2}h", pcm)
     assert max(abs(s) for s in samples[16000:]) > 4000
 
-    # The cache is keyed by content, so an unchanged run isn't decoded again,
-    # and runs that no longer exist leave nothing behind.
+    # The cache is keyed by content, so an unchanged run isn't decoded again;
+    # PCM the database still refers to is kept, and runs that no longer exist
+    # leave nothing behind once the database stops referring to them.
     load_captures(raw, db_path, cache)
+    assert remove_stale_capture_pcm(cache, db_path) == 0
     assert len(list(cache.glob("*.pcm"))) == 2
     for body in raw.glob("capture/*/*"):
         body.unlink()
     rebuild(raw, db_path)
     load_captures(raw, db_path, cache)
+    assert len(list(cache.glob("*.pcm"))) == 2
+    assert remove_stale_capture_pcm(cache, db_path) == 2
     assert list(cache.glob("*.pcm")) == []
 
 
@@ -306,6 +311,8 @@ def test_mac_channels_are_mixed_win_over_the_pendant_and_say_who_spoke(tmp_path)
     rows = {channel: (start, duration, path) for start, duration, channel, path
             in db.execute("SELECT start, duration, channel, pcm_path FROM mac_audio")}
     assert set(rows) == {"mic", "system", "mixed"}
+    # Each channel's PCM and the mix are all still referred to.
+    assert remove_stale_capture_pcm(cache, db_path) == 0
     start, duration, mixed = rows["mixed"]
     assert start == pytest.approx(t0) and duration == pytest.approx(2.0)
 

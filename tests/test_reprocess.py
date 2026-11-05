@@ -1,6 +1,8 @@
 import hashlib
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -36,11 +38,31 @@ def test_a_failed_run_leaves_the_previous_database_and_audio_in_place(tmp_path, 
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
     audio_burst(env["raw_dir"], 0, start + timedelta(seconds=5))  # a burst is posted as its 5 s end
+    # An import an hour before, decoded by an earlier run (so no ffmpeg here).
+    export = b"synthetic export"
+    digest = hashlib.sha256(export).hexdigest()
+    (env["imports_dir"] / "a.m4a").write_bytes(export)
+    (env["imports_dir"] / "a.m4a.json").write_text(json.dumps({
+        "file": "a.m4a", "start": (start - timedelta(hours=1)).isoformat(), "sha256": digest}))
+    reprocess.imports_pcm(env).mkdir()
+    (reprocess.imports_pcm(env) / f"{digest}.pcm").write_bytes(bytes(32000))
     reprocess.run(env)
     first, before = sha(wav), sha(env["db"])
 
-    # More audio arrives, and the run fails after cutting the conversation's new WAV.
+    def referenced_pcm():
+        db = sqlite3.connect(env["db"])
+        paths = [path for (path,) in db.execute(
+            "SELECT pcm_path FROM imported_audio UNION SELECT pcm_path FROM captured_audio"
+            " UNION SELECT pcm_path FROM mac_audio")]
+        db.close()
+        return paths
+
+    assert len(referenced_pcm()) == 1
+
+    # More audio arrives and the import is removed, and the run fails after
+    # cutting the conversation's new WAV.
     audio_burst(env["raw_dir"], 1, start + timedelta(seconds=10))
+    (env["imports_dir"] / "a.m4a.json").unlink()
 
     def fail(*args, **kwargs):
         raise RuntimeError("the speaker model crashed")
@@ -50,14 +72,18 @@ def test_a_failed_run_leaves_the_previous_database_and_audio_in_place(tmp_path, 
         reprocess.run(env)
     assert (sha(wav), sha(env["db"])) == (first, before)
     assert sorted(p.name for p in env["audio_dir"].iterdir()) == ["c1.wav"]
+    # The database left in place still finds every bit of decoded audio it refers to.
+    assert all(Path(path).exists() for path in referenced_pcm())
 
-    # The next good run moves the new WAV in, as the database now describes it.
+    # The next good run moves the new WAV in, as the database now describes it,
+    # and drops the removed import's decoded audio.
     monkeypatch.setattr(reprocess, "label_speakers", no_model)
     reprocess.run(env)
     db = sqlite3.connect(env["db"])
     [(wav_sha256,)] = db.execute("SELECT wav_sha256 FROM conversation_audio WHERE conversation_id = 'c1'").fetchall()
     db.close()
     assert sha(wav) != first and sha(wav) == wav_sha256
+    assert referenced_pcm() == [] and list(reprocess.imports_pcm(env).iterdir()) == []
 
 
 def build(path, script):
