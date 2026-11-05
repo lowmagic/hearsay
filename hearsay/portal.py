@@ -415,7 +415,12 @@ def coordinates(text: str) -> tuple[float, float] | None:
     if not found:
         return None
     lat, lon = float(found[1]), float(found[2])
-    return (lat, lon) if abs(lat) <= 90 and abs(lon) <= 180 else None
+    return (lat, lon) if on_earth(lat, lon) else None
+
+
+def on_earth(lat: float, lon: float) -> bool:
+    # False for NaN too, which compares false with everything.
+    return abs(lat) <= 90 and abs(lon) <= 180
 
 
 def heard_at_spot(spot_times: list[float], times: list[float], turns: list[tuple]) -> list[tuple]:
@@ -1084,15 +1089,22 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
             return {"type": "place", "name": name, "latitude": lat, "longitude": lon,
                     **({"radius": r} if r != RADIUS else {})}
 
-        if action == "name" and name:
-            append_tag(place(name, float(field("latitude")), float(field("longitude")), radius(field("radius"))),
-                       places_path)
+        def point() -> tuple[float, float] | None:
+            """The form's latitude and longitude, or None if they aren't a point on earth."""
+            try:
+                lat, lon = float(field("latitude")), float(field("longitude"))
+            except ValueError:
+                return None
+            return (lat, lon) if on_earth(lat, lon) else None
+
+        here = point()
+        if action == "name" and name and here:
+            append_tag(place(name, *here, radius(field("radius"))), places_path)
         elif action == "rename" and name and field("from") and name != field("from"):
             append_tag({"type": "rename", "from": field("from"), "to": name}, places_path)
-        elif action in ("ignore", "unignore"):
+        elif action in ("ignore", "unignore") and here:
             # As posted: the app sends a spot's centre in full, the page to 6 decimals (hearsay.places.read_ignored).
-            append_tag({"type": action, "latitude": float(field("latitude")),
-                        "longitude": float(field("longitude"))}, places_path)
+            append_tag({"type": action, "latitude": here[0], "longitude": here[1]}, places_path)
         elif action == "forget" and field("from"):
             append_tag({"type": "forget", "name": field("from")}, places_path)
         elif action in ("drop", "at") and field("start") and field("end") and (action == "drop" or name):

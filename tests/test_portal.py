@@ -243,6 +243,22 @@ def test_a_radius_that_isnt_a_number_of_metres_keeps_the_area(portal, radius):
     assert read_places(labels_dir) == [("Back Room", -26.12, 80.14, 400.0), ("Back Room", -26.13, 80.15, 100.0)]
 
 
+@pytest.mark.parametrize("action", ["name", "ignore", "unignore"])
+@pytest.mark.parametrize("latitude, longitude", [
+    ("north", "80.14"), ("-26.12", ""),  # not numbers
+    ("nan", "80.14"), ("-26.12", "inf"),  # not finite
+    ("91", "80.14"), ("-26.12", "-180.5"),  # off the earth
+])
+def test_a_spot_that_isnt_a_point_on_earth_writes_nothing(portal, action, latitude, longitude):
+    client, _, labels_dir = portal
+    log_in(client)
+    before = {p: p.read_bytes() for p in labels_dir.rglob("*") if p.is_file()}
+    response = client.post("/places", data={"action": action, "name": "Back Room", "latitude": latitude,
+                                            "longitude": longitude}, follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/places"
+    assert {p: p.read_bytes() for p in labels_dir.rglob("*") if p.is_file()} == before
+
+
 def test_each_clip_shows_its_words_and_when_and_where_it_was_said(portal):
     client, db_path, _ = portal
     log_in(client)
