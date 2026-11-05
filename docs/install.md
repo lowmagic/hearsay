@@ -176,14 +176,18 @@ sealed conversations ([`hearsay/retention.py`](../hearsay/retention.py)):
   and in the dev box's transcript (timings kept, so the turns around it
   stay as they were), and raw uploads and imports wholly inside it are
   deleted. Those that only reach into it stay until the 60 days.
-- Everything that's audio, 60 days after its conversation ends, yours too:
-  raw uploads and imports, the conversation's WAV (its page then says No
-  audio) and its transcript files. Raw audio and imports covering an
-  enrollment window stay, so you can be enrolled in a new speaker model.
-  Omi's old transcript and memory payloads are text and stay. The records
-  keep every other turn's words, voice vectors and scores.
-- Decoded audio goes on the run after its conversation is sealed, and
-  cached model results once no run has used them for two weeks.
+- Everything that's audio, 60 days on, yours too: each raw upload and
+  import 60 days after its own audio ends, and a conversation's WAV (its
+  page then says No audio) and transcript files 60 days after the
+  conversation ends. Raw audio and imports covering an enrollment window
+  stay, so you can be enrolled in a new speaker model. Omi's old transcript
+  and memory payloads are text and stay. The records keep every other
+  turn's words, voice vectors and scores.
+- A transcript file or failure marker whose conversation no longer exists
+  (its boundaries moved while it was held, or it's from Omi's days), on
+  any run.
+- Decoded audio goes on the run after the audio is sealed, and cached
+  model results once no run has used them for two weeks.
 
 Each deleted file is listed in `/mnt/fast/hearsay/records/deleted.jsonl`
 before it goes; the NAS's snapshots keep it until they expire. To see what

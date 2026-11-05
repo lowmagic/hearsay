@@ -289,7 +289,8 @@ Decided 2026-11-05, with the operator:
   keeping sealed conversations with discarded audio out of unseal needs
   per-conversation sealing, a later step if edge audio surviving to
   retention is too much.
-- Retention: audio 60 days after its conversation ends: raw uploads,
+- Retention: audio 60 days on (raw uploads and imports 60 days after their
+  own audio ends, the rest after its conversation does): raw uploads,
   imports, conversation WAVs and decoded audio, the owner's too, except raw
   covering an enrollment window, kept so the owner can be enrolled in a new
   speaker model. Records keep every turn's words, vectors and scores
@@ -300,7 +301,8 @@ Decided 2026-11-05, with the operator:
   where something is thrown out, and go 60 days after their conversation
   ends: `records check` compares a build from raw with them, and an unseal
   within the window reads them again (revised 2026-11-05 from going once
-  sealed).
+  sealed). One whose conversation no longer exists (boundaries moved during
+  the hold, or Omi's UUID-named ones) goes on any run.
 - Backups: raw, audio, imports, decoded audio (moved out of `db` to its own
   dataset) and transcripts get their own daily snapshots kept 7 days,
   replicated at 7 days; input audio isn't precious. Records, the database,
@@ -319,7 +321,9 @@ at the end of every reprocess, after sealing. A word cut from a record is
 blanked, keeping its timing and speaker, which are all turns are cut by,
 so the turns around it are built as before. Each deleted file is logged in
 `records/deleted.jsonl` first, and a deleted upload's parsed rows (taps,
-locations) load from its digest wherever the seal line moves. Where a run
+locations) load from its digest wherever the seal line moves. Raw uploads
+and imports go 60 days after their own audio ends; a conversation's WAV and
+transcripts 60 days after it ends. Where a run
 of the pendant's audio went on across uploads deleted from a stretch, what
 follows can be placed up to a second or two differently after an unseal,
 inside the conversation that is transcribed again then anyway. `records

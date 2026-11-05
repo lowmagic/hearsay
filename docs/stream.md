@@ -165,7 +165,8 @@ conversation's revision to change.
 
 Throwing out is the operator's input, applied on every reprocess, so a re-run from raw never brings it back into the
 stream. Hearsay deletes the stretch's audio and cuts its words from what it keeps once the conversation is sealed, two
-weeks after it ends (the rest of its raw audio goes 60 days after); nothing of that changes the stream.
+weeks after it ends (raw audio only partly in the stretch goes 60 days after it ends); nothing of that changes the
+stream.
 
 ## The hold
 
