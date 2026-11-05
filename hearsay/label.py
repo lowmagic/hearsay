@@ -32,10 +32,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from hearsay.music import SONG_MAX_SPEECH, SONG_MIN_MUSIC, SONG_MIN_SECONDS
+from hearsay.retention import RETAIN
 from hearsay.speakers import DIARIZATION_AGREEMENT, NOT_OWNER_THRESHOLD, OWNER_THRESHOLD
 from hearsay.turns import wall
 
@@ -116,6 +118,12 @@ def candidates() -> list[dict]:
     return query(CANDIDATES_SQL)
 
 
+def playable(turns: list[dict]) -> list[dict]:
+    """The turns whose conversation's WAV is still kept, to be heard: retention
+    deletes it 60 days after the conversation (hearsay/retention.py)."""
+    return [t for t in turns if t["wav_file"]]
+
+
 def existing_labels() -> dict[str, str]:
     """turn_id -> label, as of the last reprocess."""
     return {row["turn_id"]: row["value"] for row in query(LABELS_SQL)}
@@ -183,7 +191,7 @@ def review_loop() -> None:
     """
     labeled = existing_labels()
     disagreements = []
-    for turn in candidates():
+    for turn in playable(candidates()):
         label, sim = labeled.get(turn["turn_id"]), turn["owner_similarity"]
         if sim is None:
             continue
@@ -207,7 +215,7 @@ def review_loop() -> None:
 
 def label_loop() -> None:
     labeled = existing_labels()
-    unlabeled = [s for s in candidates() if s["turn_id"] not in labeled]
+    unlabeled = [s for s in playable(candidates()) if s["turn_id"] not in labeled]
     print(f"{len(labeled)} labeled, {len(unlabeled)} to go.")
     print("m = me, n = not me, u = unsure, s = skip, r = replay, q = quit")
     while unlabeled:
@@ -224,7 +232,7 @@ def check_loop() -> None:
     """Label turns that inherited their label, in random order, to measure
     how often inheriting is right. The inherited label isn't shown."""
     labeled = existing_labels()
-    unchecked = [t for t in query(INHERITED_SQL) if t["turn_id"] not in labeled]
+    unchecked = [t for t in playable(query(INHERITED_SQL)) if t["turn_id"] not in labeled]
     random.shuffle(unchecked)
     print(f"{len(unchecked)} turns labeled by diarization and not yet by ear.")
     print("m = me, n = not me, u = unsure, s = skip, r = replay, q = quit")
@@ -261,7 +269,7 @@ def music_loop(only_dropped: bool = False) -> None:
     by ear; a talk answer puts one back on the next reprocess.
     """
     answered = music_answers()
-    pool = [t for t in query(MUSIC_SQL) if t["turn_id"] not in answered and (dropped(t) or not only_dropped)]
+    pool = [t for t in playable(query(MUSIC_SQL)) if t["turn_id"] not in answered and (dropped(t) or not only_dropped)]
     print(f"{len(answered)} answered, {len(pool)} to go. Are the words a song's, or someone talking?")
     print("g = song, t = talk, u = unsure, s = skip, r = replay, q = quit")
     while pool:
@@ -328,6 +336,10 @@ def import_audio(file: str, start: str) -> None:
     data = path.read_bytes()
     sha = hashlib.sha256(data).hexdigest()
     began = datetime.fromisoformat(start).astimezone(timezone.utc)
+    if began.timestamp() < time.time() - RETAIN:
+        # Reprocess would leave it out rather than unseal that far back (hearsay/records.py), then delete it.
+        sys.exit(f"{path.name} began {began.astimezone():%Y-%m-%d %H:%M}, more than {RETAIN // 86400} days ago:"
+                 " Hearsay keeps no audio that old, so it isn't imported.")
     # No sidecars yet, or none matching (grep's 1), means not imported; any other failure stops.
     found = ssh(["sh", "-c", f"'set -- {IMPORTS}/*.json; [ ! -e \"$1\" ] || grep -l {sha} \"$@\" || [ $? -eq 1 ]'"])
     if found.strip():

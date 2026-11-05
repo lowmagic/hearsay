@@ -145,9 +145,10 @@ from there and never reads that audio again. So a run with nothing new reads
 only the last two weeks' audio. Who spoke, your tags and throw-outs,
 places and the stream still re-run over everything. A sealed conversation
 keeps the transcript and models it was sealed with: a Words update or a new
-model reaches it only if you unseal it, while its audio is still kept. This
-moves the seal line back to before a date, and the next reprocess redoes
-everything after it from raw:
+model reaches it only if you unseal it, while its audio is still kept: never
+more than 60 days back, nor so far that a conversation that began before
+then would be redone. This moves the seal line back to before a date, and
+the next reprocess redoes everything after it from raw:
 
 ```sh
 sudo docker compose -f /mnt/fast/repos/hearsay/install/compose.yaml run --rm reprocess python -m hearsay.records unseal 2026-10-01
@@ -157,12 +158,40 @@ An import, or pendant audio downloaded late, that lands behind the line, or
 less than three minutes past it where its speech joins the last sealed
 conversation, unseals back to it by itself, and so does an enrollment window
 registered once the line has passed its start (so enroll from the last two
-weeks' audio, or everything since the window is redone). To check that a build from
-the records equals a build from raw (slow: it builds the database twice, once
-reading all the audio):
+weeks' audio, or everything since the window is redone). Anything more than
+60 days back is left out instead, and the run lists it. To check that a
+build from the records equals a build from raw (slow: it builds the
+database twice, once reading all the audio); up to the last conversation
+audio was deleted or cut from, both builds take the records, and it says so:
 
 ```sh
 sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay/install/compose.yaml run --rm reprocess python -m hearsay.records check
+```
+
+At the end of every reprocess, once it has sealed, audio is deleted from
+sealed conversations ([`hearsay/retention.py`](../hearsay/retention.py)):
+
+- A stretch you threw out, as soon as its conversation is sealed: it's
+  silenced in the conversation's WAV, its words are blanked in the record
+  and in the dev box's transcript (timings kept, so the turns around it
+  stay as they were), and raw uploads and imports wholly inside it are
+  deleted. Those that only reach into it stay until the 60 days.
+- Everything that's audio, 60 days after its conversation ends, yours too:
+  raw uploads and imports, the conversation's WAV (its page then says No
+  audio) and its transcript files. Raw audio and imports covering an
+  enrollment window stay, so you can be enrolled in a new speaker model.
+  Omi's old transcript and memory payloads are text and stay. The records
+  keep every other turn's words, voice vectors and scores.
+- Decoded audio goes on the run after its conversation is sealed, and
+  cached model results once no run has used them for two weeks.
+
+Each deleted file is listed in `/mnt/fast/hearsay/records/deleted.jsonl`
+before it goes; the NAS's snapshots keep it until they expire. To see what
+the next reprocess would delete and cut, changing nothing (how many, how
+big, and when their audio ends):
+
+```sh
+sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay/install/compose.yaml run --rm reprocess python -m hearsay.retention report
 ```
 
 To run the whole pipeline now, enqueue it on the NAS:
@@ -181,7 +210,7 @@ sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay
 - `/mnt/fast/hearsay/db/hearsay.sqlite`: parsed payloads. Updated only if
   every payload parses; otherwise the failures are listed and the old database
   and audio are left in place. Deleting it is safe: the next run builds it
-  again from raw.
+  again from raw and the records.
 - `/mnt/fast/hearsay/audio/<conversation_id>.wav`: each conversation's audio,
   aligned so that segment times are offsets into the file. Missing audio is
   silence; the `conversation_audio` table records how each file was aligned
@@ -193,7 +222,7 @@ sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay
 - Speaker embeddings and owner / not-owner labels per segment, in the
   `segment_speakers` table.
 
-Raw is mounted read-only. Members of the `apps` group can read the outputs.
+Members of the `apps` group can read the outputs.
 
 ## Owner voice (dev box, then NAS)
 
@@ -244,6 +273,8 @@ hearsay-label import ~/Downloads/omi_export.mp3 "2026-09-28 19:42"
 It is copied unchanged to `/mnt/fast/hearsay/imports/` over `ssh nas` and
 placed on the timeline at that time on the next reprocess; where it overlaps
 live audio, the live audio wins. Importing the same file twice does nothing.
+A recording that began more than 60 days ago is refused: Hearsay keeps no
+audio that old.
 
 ## Correcting who spoke (phone or any browser)
 
@@ -281,8 +312,11 @@ left for you. Check between fills in a stretch from the first turn checked
 to the last. Either way, with a few words of why if you like (Idea Machine sees
 them). Until the next reprocess (within the hour) you can undo it; then
 its words leave the stream and Hearsay's database for good, and Idea
-Machine is told to delete what it took from them. Its audio is kept until
-retention.
+Machine is told to delete what it took from them. Once the conversation is
+sealed (two weeks after it ends, or on the next reprocess if it already
+is), its audio is silenced, its words are cut from the records and
+transcripts, and the raw audio wholly inside it is deleted; raw audio that
+only reaches into it goes at 60 days with the rest (see Reprocessing).
 
 The portal's Places page lists spots where the phone recorded and no named
 place is near (how long, which days, a map link); name them there. Only these

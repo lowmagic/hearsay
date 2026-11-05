@@ -126,6 +126,13 @@ def rows(db_path, sql):
         db.close()
 
 
+def arrived_late(first, d):
+    """When late audio unseals back to, as of NOW, with nothing behind the retention line."""
+    when, ignored = late(first, d["records"], d["imports"], d["labels"], now=NOW)
+    assert ignored == {}
+    return when
+
+
 def test_a_settled_conversation_is_sealed_in_order_and_rebuilds_from_its_record_alone(tmp_path):
     d = dirs(tmp_path)
     first = first_build(tmp_path, d)
@@ -187,15 +194,15 @@ def test_audio_landing_behind_the_line_unseals_back_to_it(tmp_path):
     db.close()
     seal(first, d["records"], d["transcripts"], d["labels"], now=NOW)
     # Neither that import, nor the enrollment window, nor the upload a day ago (past the line) is late.
-    assert late(first, d["records"], d["imports"], d["labels"]) is None
+    assert arrived_late(first, d) is None
 
     # An import of an hour before c1, made after sealing.
     start = datetime.fromtimestamp(T0 - 1800, timezone.utc)
     (d["imports"] / "old.m4a").write_bytes(b"audio")
     (d["imports"] / "old.m4a.json").write_text(json.dumps({"file": "old.m4a", "start": start.isoformat()}))
-    assert late(first, d["records"], d["imports"], d["labels"]) == T0 - 1800
+    assert arrived_late(first, d) == T0 - 1800
 
-    assert unseal(d["records"], T0 - 1800) == {"unsealed": 1, "line": None}
+    assert unseal(d["records"], T0 - 1800, now=NOW) == {"unsealed": 1, "line": None}
     assert not list((d["records"] / "conversations").iterdir())
     assert sealed_payloads(d["records"]) == ({}, set())
     assert json.loads((d["records"] / "seal.json").read_text())["line"] == 0.0
@@ -209,8 +216,8 @@ def test_an_enrollment_window_added_behind_the_line_unseals_back_to_it(tmp_path)
     # Enrolled after sealing, from a reading two hours before c1: a build from records no longer reads its audio.
     added = window(T0 - 7200, T0 - 7140)
     enroll(d["labels"], WINDOW, added)
-    assert late(first, d["records"], d["imports"], d["labels"]) == T0 - 7200
-    unseal(d["records"], T0 - 7200)
+    assert arrived_late(first, d) == T0 - 7200
+    unseal(d["records"], T0 - 7200, now=NOW)
 
     # The next run cuts it from raw, and sealing keeps it with the window enrolled before.
     db = sqlite3.connect(first)
@@ -219,7 +226,7 @@ def test_an_enrollment_window_added_behind_the_line_unseals_back_to_it(tmp_path)
     db.commit()
     db.close()
     seal(first, d["records"], d["transcripts"], d["labels"], now=NOW)
-    assert late(first, d["records"], d["imports"], d["labels"]) is None
+    assert arrived_late(first, d) is None
     restored = tmp_path / "restored.sqlite"
     restore(restored, d["records"])
     assert rows(restored, "SELECT start, end, vector FROM sealed_enrollment ORDER BY start") == [
@@ -262,8 +269,8 @@ def test_speech_landing_less_than_a_gap_after_the_line_joins_the_sealed_conversa
     landed = T0 + 60 + GAP / 2
     (d["imports"] / "later.m4a.json").write_text(json.dumps(
         {"file": "later.m4a", "start": datetime.fromtimestamp(landed, timezone.utc).isoformat()}))
-    assert late(first, d["records"], d["imports"], d["labels"]) == landed
-    assert unseal(d["records"], landed)["unsealed"] == 1
+    assert arrived_late(first, d) == landed
+    assert unseal(d["records"], landed, now=NOW)["unsealed"] == 1
 
     # c1's 30 s of speech, then the recording's minute: from raw, one conversation.
     speech = [(T0 + 1, T0 + 16), (T0 + 44, T0 + 59), (landed, landed + 60)]
@@ -279,13 +286,13 @@ def test_speech_landing_less_than_a_gap_after_the_line_joins_the_sealed_conversa
     assert found(d["records"]) == found(None) == [(T0, landed + 61, 90.0)]
 
     # The next run finds nothing late, nor does one after the line passes the recording again.
-    assert late(first, d["records"], d["imports"], d["labels"]) is None
+    assert arrived_late(first, d) is None
     db = sqlite3.connect(first)
     db.execute("INSERT INTO imported_audio VALUES ('later.m4a', ?, 60, 'sha-later', 'later.pcm')", (landed,))
     db.commit()
     db.close()
     seal(first, d["records"], d["transcripts"], d["labels"], now=NOW)
-    assert late(first, d["records"], d["imports"], d["labels"]) is None
+    assert arrived_late(first, d) is None
 
 
 @pytest.mark.parametrize("now, opened, sealed", [
@@ -331,7 +338,7 @@ def test_unsealing_to_between_conversations_keeps_the_records_before(tmp_path):
     seal(first, d["records"], d["transcripts"], d["labels"], now=NOW)
     assert sealed_ids(d["records"]) == ["c1", "c2", "c3"]
 
-    assert unseal(d["records"], T0 + 86400) == {
+    assert unseal(d["records"], T0 + 86400, now=NOW) == {
         "unsealed": 2, "line": datetime.fromtimestamp(T0 + 60).isoformat(timespec="minutes")}
     assert sealed_ids(d["records"]) == ["c1"]
     assert json.loads((d["records"] / "seal.json").read_text())["line"] == T0 + 60
@@ -341,7 +348,7 @@ def test_unsealing_to_between_conversations_keeps_the_records_before(tmp_path):
     restore(restored, d["records"])
     assert rows(restored, "SELECT start, end FROM sealed_enrollment") == [tuple(WINDOW)]
     # Unsealing to past the line plus GAP unseals nothing.
-    assert unseal(d["records"], T0 + 60 + GAP + 1) == {"unsealed": 0}
+    assert unseal(d["records"], T0 + 60 + GAP + 1, now=NOW) == {"unsealed": 0}
     assert sealed_ids(d["records"]) == ["c1"]
 
 

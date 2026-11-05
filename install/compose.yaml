@@ -68,6 +68,9 @@ services:
   # One-shot, not started by `up`: rebuilds the database, conversation audio
   # and speaker labels from raw. The labels dir holds the operator's own input
   # (enrollment windows, labels), which reprocessing reads but never writes.
+  # Raw, transcripts and imports are writable for retention alone, which
+  # deletes from them and cuts thrown-out words from transcripts
+  # (hearsay/retention.py).
   reprocess:
     build:
       context: ..
@@ -93,13 +96,13 @@ services:
       HEARSAY_STREAM_DIR: /data/stream
       HEARSAY_RECORDS_DIR: /data/records
     volumes:
-      - /mnt/fast/hearsay/raw:/data/raw:ro
+      - /mnt/fast/hearsay/raw:/data/raw
       - /mnt/fast/hearsay/records:/data/records
       - /mnt/fast/hearsay/db:/data/db
       - /mnt/fast/hearsay/audio:/data/audio
       - /mnt/fast/hearsay/labels:/data/labels:ro
-      - /mnt/fast/hearsay/transcripts:/data/transcripts:ro
-      - /mnt/fast/hearsay/imports:/data/imports:ro
+      - /mnt/fast/hearsay/transcripts:/data/transcripts
+      - /mnt/fast/hearsay/imports:/data/imports
       - /mnt/fast/hearsay/stream:/data/stream
     command: ["python", "-m", "hearsay.reprocess"]
 

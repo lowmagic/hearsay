@@ -29,8 +29,9 @@ Hearsay records conversations with the consent of the people in them. The contro
   downstream tools. They get text only.
 - Places are stored as names I choose, never coordinates. Other people's tone of voice is never
   inferred.
-- `forgotten.json` is the deletion signal for consumers. Deleting old audio on a rolling window is
-  on the [roadmap](docs/roadmap.md#12-retention).
+- `forgotten.json` is the deletion signal for consumers. Audio is deleted 60 days after its
+  conversation ends, and a thrown-out stretch's as soon as its conversation is sealed
+  ([retention](docs/roadmap.md#12-retention)).
 
 ## How it works
 

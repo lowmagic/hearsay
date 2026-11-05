@@ -5,8 +5,9 @@ Until then consumers don't see it at all (its index entry, file, taps and
 places), and the operator can read and hear it in the portal and throw out
 what shouldn't go (hearsay/forget.py). Two weeks to start, for ample time to
 review; 7 days once reviewing is routine. The same boundary seals a
-conversation (hearsay/records.py), so everything stays open to change while
-it's reviewed, and what Idea Machine gets has its final transcript.
+conversation (hearsay/records.py) and deletes what was thrown out of it
+(hearsay/retention.py), so everything stays open to change while it's
+reviewed, and what Idea Machine gets has its final transcript.
 
 Releasing is the operator's input in labels/release.jsonl, by absolute time
 like everything else, so it survives re-transcription:
