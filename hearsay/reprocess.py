@@ -18,9 +18,9 @@ byte is kept many times). A schema change replaces the changed table inside
 the same transaction. Deleting the database is always safe: the next run
 fills a new one from raw.
 
-Conversations that settled a week ago are sealed at the end of a run
-(hearsay/records.py), and later runs take them from their records without
-reading their audio, so a run with nothing new reads only the last week's.
+Conversations whose hold has ended (hearsay/hold.py) are sealed at the end of
+a run (hearsay/records.py), and later runs take them from their records
+without reading their audio, so a run with nothing new reads only the hold's.
 Slow steps (voice detection, speaker embeddings, the audio models) are cached
 by audio content next to the database. A run waits for any other to finish
 (one corral starts and one started by hand would otherwise overlap and break

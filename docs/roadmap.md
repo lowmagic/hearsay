@@ -240,7 +240,8 @@ in `mac/`); calls under 30 s of speech are dropped like any conversation.
 ## 12. Retention
 
 Held 2026-10-28 until Idea Machine's M2 validates me / not me: raw audio is
-the rollback for its re-link of segments.
+the rollback for its re-link of segments. Lifted 2026-11-01: M2 validated,
+and nothing in Idea Machine needs the audio.
 
 Delete non-owner audio after embedding and transcription. Starts only
 once the models are tuned (diarization, voice thresholds, clustering): until
@@ -264,6 +265,53 @@ it goes; who is speaking re-runs from stored vectors for good. Then all
 audio past the window is deleted, the owner's too, except the enrollment
 windows' (a few minutes, so the owner can be enrolled in a new speaker
 model). The invariants on raw payloads and re-running from raw change with it.
+
+Decided 2026-11-05, with the operator:
+
+- One boundary for sealing (slice 19), the hold (slice 20) and discarding
+  thrown-out audio: 14 days after a conversation ends to start, 7 once
+  reviewing is routine. Sealing moved from 7 days to the hold, so a Words
+  update made while reviewing reaches the conversation being read, and what
+  Idea Machine gets normally has its final transcript (extracted once).
+  Sealing comes first in a run, so the record holds every turn before any
+  audio goes. Late uploads don't hold the boundary back: of 3,830 phone
+  uploads none arrived more than 24 h after its audio began (173 after
+  6 h), and late audio unseals by itself.
+- Thrown-out stretches: silenced in the conversation's WAV on the next
+  reprocess. At the boundary, raw uploads and imports lying wholly inside a
+  stretch are deleted, and its words and vectors leave the conversation's
+  record. Uploads that only reach into a stretch stay until retention, so an
+  unseal within the window rebuilds the conversation exactly; their
+  thrown-out audio (up to about a minute at each edge) never reaches the
+  stream. Raw is deleted whole, never edited. Deleting every upload a
+  stretch touches would lose neighbouring speech on unseal; keeping sealed
+  conversations with discarded audio out of unseal needs per-conversation
+  sealing, a later step if edge audio surviving to retention is too much.
+- Retention: audio 60 days after its conversation ends: raw uploads,
+  imports, conversation WAVs and decoded audio, the owner's too, except raw
+  covering an enrollment window, kept so the owner can be enrolled in a new
+  speaker model. Records keep every turn's words, vectors and scores
+  whatever it's tagged, so `_media`, `_music` and `_noise` tags keep
+  training the hints. Unsealing reaches back 60 days at most; an import
+  older than that is refused rather than unsealing to it.
+- The dev box's transcript files go once their conversation is sealed: the
+  record holds the transcript from then on.
+- Backups: raw, audio, imports, decoded audio (moved out of `db` to its own
+  dataset) and transcripts get their own daily snapshots kept 7 days,
+  replicated at 7 days; input audio isn't precious. Records, the database,
+  labels and the stream keep the NAS-wide 2 weeks, replicated for 2 months.
+- No tuning has to come first: thresholds and the media and music rules run
+  on stored vectors and can be retuned at any time. Only a new
+  transcription, diarization or speaker model is limited to the window.
+  Owner-threshold labels show room (100 labels: owner at 0.30 keeps
+  precision 1.00 and lifts recall from 0.78 to 0.90), with only 8 labels
+  between 0.30 and 0.40 so far.
+- Open: words cut from a record for a stretch thrown out after sealing
+  stay in the records' and database's snapshots up to 2 months.
+
+Built in order, each usable on its own: the boundary; discarding thrown-out
+audio and cutting it from records; retention with its guards; the datasets
+and snapshots (`install/nas.sh`).
 
 ## 13. Where a conversation happened
 
@@ -685,3 +733,7 @@ over the rule, so the 2 talk turns stay.
 
 Done when: songs' words rarely reach the stream, and the labeled turns say
 the threshold drops almost no one talking.
+
+Done 2026-11-05: listening through new capture on the conversation pages
+(slice 20), songs' words no longer reached the stream, a session of songs
+one night was clean, and so was the audio for a dance class.

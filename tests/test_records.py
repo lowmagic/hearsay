@@ -15,7 +15,8 @@ from hearsay.delivery import measure_delivery
 from hearsay.imports import SCHEMA as IMPORTS_SCHEMA, load_imports
 from hearsay.music import SCHEMA as MUSIC_SCHEMA, score_music
 from hearsay.parse import rebuild
-from hearsay.records import SETTLE, late, restore, seal, sealed_payloads, unseal
+from hearsay.hold import HOLD
+from hearsay.records import late, restore, seal, sealed_payloads, unseal
 from hearsay.speakers import SCHEMA as SPEAKERS_SCHEMA, label_speakers, owner_voice
 from hearsay.transcribe import settings_for
 from hearsay.turns import build_turns, record_operator_input
@@ -23,7 +24,7 @@ from hearsay.turns import build_turns, record_operator_input
 from test_capture import record, upload
 
 NOW = datetime(2026, 10, 20, 12, tzinfo=timezone.utc).timestamp()
-T0 = NOW - 10 * 24 * 3600  # c1 starts here; c2 and c3 a day apart after it
+T0 = NOW - HOLD - 3 * 86400  # c1 starts here; c2 and c3 a day apart after it
 C3_END = T0 + 2 * 86400 + 60
 
 
@@ -288,8 +289,8 @@ def test_speech_landing_less_than_a_gap_after_the_line_joins_the_sealed_conversa
 
 
 @pytest.mark.parametrize("now, opened, sealed", [
-    (C3_END + SETTLE - 1, (), ["c1", "c2"]),  # c3 ended a second short of SETTLE ago
-    (C3_END + SETTLE, (), ["c1", "c2", "c3"]),
+    (C3_END + HOLD - 1, (), ["c1", "c2"]),  # c3's hold ends a second later
+    (C3_END + HOLD, (), ["c1", "c2", "c3"]),
     (NOW, ("c2",), ["c1"]),  # c2's audio ends less than GAP after its speech
 ])
 def test_sealing_stops_before_a_conversation_still_settling_or_open(tmp_path, now, opened, sealed):

@@ -49,14 +49,15 @@ Me / not me is done (2026-10-28, roadmap slice 5): Hearsay names nobody but
 the owner, and the portal plays the turns it couldn't decide for the
 operator to tag. Slice 21 is done (2026-10-30): turns that sound like the
 media the operator has tagged leave the stream as media (`hearsay/media.py`).
-Now slice 22: turns whose words are a song's, not anyone talking, leave the
-stream as music (`hearsay/music.py`). Its done-when is checked by listening
-to new capture on slice 20's conversation page, built first for that. Slice
-20 (throw out what was said, and hold the stream two weeks) is built too,
-and is done once the operator has reviewed two weeks on it. Slice 19 (turns
-kept without their audio) is done (2026-11-04): a conversation seals a week
-after it ends, and reprocess takes it from its record. Next, slice 12 (retention), which changes the invariants on raw
-payloads and re-running from raw. Slice 12 also waits for Idea Machine's M2, which validates me / not me.
+Slice 22 is done (2026-11-05): turns whose words are a song's, not anyone
+talking, leave the stream as music (`hearsay/music.py`). Slice 20 (throw out
+what was said, and hold the stream two weeks) is built, and is done once the
+operator has reviewed two weeks on it. Slice 19 (turns kept without their
+audio) is done (2026-11-04): a conversation seals when its hold ends (two
+weeks, from 2026-11-05), and reprocess takes it from its record. Now slice
+12 (retention), which changes the invariants on raw payloads and re-running
+from raw. Idea Machine's M2 validated me / not me on 2026-11-01, so it no
+longer waits for that.
 Every slice, done or shelved, and what was measured for it is in the
 [roadmap](docs/roadmap.md).
 

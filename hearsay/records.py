@@ -1,12 +1,15 @@
 """Turns kept without their audio (roadmap slice 19): what each conversation's
 audio produced, kept so a settled conversation never needs its audio again.
 
-A conversation is sealed once it ended SETTLE ago, is transcribed with the
-current settings (or has no audio, or failed to transcribe for its WAV and
-those settings), and every conversation before it is sealed. The seal line is the end
+A conversation is sealed once its hold has ended (HOLD after it ends,
+hearsay/hold.py), is transcribed with the current settings (or has no audio,
+or failed to transcribe for its WAV and those settings), and every
+conversation before it is sealed. Sealing at the hold keeps everything open
+to change while the operator reviews (a Words update reaches what's being
+read) and fixes the transcript Idea Machine gets. The seal line is the end
 of the last one sealed: everything before it comes from records, everything
 after it from raw, as before. So a reprocess with nothing new reads no audio
-older than a week, and once retention (slice 12) deletes old audio, nothing
+older than the hold, and once retention (slice 12) deletes old audio, nothing
 depends on it.
 
 A record holds what audio produced, never what's decided from it: the
@@ -57,12 +60,12 @@ from pathlib import Path
 
 from hearsay.affect import AFFECT_VERSION
 from hearsay.conversations import GAP, VAD_VERSION
+from hearsay.hold import HOLD
 from hearsay.music import MUSIC_VERSION
 from hearsay.speakers import EMBED_VERSION
 from hearsay.transcribe import settings_for
 from hearsay.words import boosted, read_committed
 
-SETTLE = 7 * 24 * 3600  # seconds after a conversation ends
 MODELS = {"vad": VAD_VERSION, "speaker": EMBED_VERSION, "music": MUSIC_VERSION, "affect": AFFECT_VERSION}
 # Parsed rows kept for a sealed upload: everything parse.py makes from one
 # except its audio (audio_chunks), keyed by the payload's path.
@@ -204,7 +207,7 @@ def seal(db_path: Path, records_dir: Path, transcripts_dir: Path, labels_dir: Pa
                 # One that failed for this WAV and settings won't be retried: sealed untranscribed.
                 if transcript is None and made(transcripts_dir / "failed" / f"{cid}.json", wav_sha256) is None:
                     break  # waits for the dev box
-            if is_open or end > now - SETTLE:
+            if is_open or end > now - HOLD:
                 break
             turns = {}
             for turn_id, cov, embedding, veto, channel, *scores in db.execute(

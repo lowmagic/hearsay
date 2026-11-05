@@ -145,7 +145,7 @@ Hearsay reads only `term`; `source` and the optional `heard_as` are Idea Machine
 
 Nothing reaches transcription until the operator presses Update on the Words page, which commits these terms and the
 words typed there, as they are then. Every Update changes the transcription settings, so every conversation not yet
-sealed (about the last week) is transcribed again, with new `transcript_revision`s and renumbered ids;
+sealed (those still held, the last two weeks) is transcribed again, with new `transcript_revision`s and renumbered ids;
 older conversations change only when the operator unseals them.
 
 ## Forgetting

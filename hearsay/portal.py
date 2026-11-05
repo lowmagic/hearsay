@@ -1189,7 +1189,7 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
         update = ("" if error or not changes else
                   f"<form method='post' action='/words'><input type='hidden' name='seen' value='{words_seen(proposed)}'>"
                   f"<button type='submit' name='action' value='update'>Update: re-transcribes the {conversations}"
-                  " conversation(s) from the last week</button></form>")
+                  " conversation(s) not yet sealed</button></form>")
         box = html.escape("\n".join(typed))
         discard = ("<form method='post' action='/words'><button type='submit' name='action' value='discard'>"
                    "Discard draft</button></form>" if read_draft(labels_dir) is not None else "")
