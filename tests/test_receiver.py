@@ -1,5 +1,6 @@
 import os
 
+import pytest
 from fastapi.testclient import TestClient
 
 from hearsay.receiver import create_capture_app
@@ -13,7 +14,8 @@ def test_capture_upload_needs_the_bearer_token_which_is_never_stored(tmp_path):
     client = TestClient(create_capture_app(tmp_path, "c4pture"))
     body = os.urandom(5000)
 
-    for headers in [{}, {"Authorization": "Bearer wrong"}, {"Authorization": "c4pture-but-not-bearer"}]:
+    for headers in [{}, {"Authorization": "Bearer wrong"}, {"Authorization": "c4pture-but-not-bearer"},
+                    {"Authorization": "c4pture"}]:
         assert client.post("/capture", content=body, headers=headers).status_code == 401
     assert all_files(tmp_path) == []
 
@@ -24,6 +26,11 @@ def test_capture_upload_needs_the_bearer_token_which_is_never_stored(tmp_path):
     assert stored.read_bytes() == body
     sidecar = stored.with_suffix(".json").read_text()
     assert "c4pture" not in sidecar and "upload-1" in sidecar
+
+
+def test_a_receiver_without_a_token_is_never_built(tmp_path):
+    with pytest.raises(RuntimeError):
+        create_capture_app(tmp_path, "")
 
 
 def test_rejections_are_logged_without_the_token(tmp_path, caplog):
