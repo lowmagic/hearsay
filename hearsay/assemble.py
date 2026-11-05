@@ -136,9 +136,9 @@ def cut(raw_dir: Path, bursts: list, start: float, duration: float) -> tuple[byt
     return bytes(pcm), (covered_samples / total if total else 0.0)
 
 
-def write_wav(path: Path, pcm: bytes) -> tuple[str, bool]:
-    """Write path unless it already holds exactly this audio. Returns the
-    WAV's sha256 and whether it was written."""
+def write_wav(path: Path, pcm: bytes, out: Path) -> tuple[str, bool]:
+    """Write the WAV to out unless path already holds exactly this audio.
+    Returns the WAV's sha256 and whether it was written."""
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
@@ -149,13 +149,18 @@ def write_wav(path: Path, pcm: bytes) -> tuple[str, bool]:
     sha256 = hashlib.sha256(data).hexdigest()
     if path.exists() and path.stat().st_size == len(data) and path.read_bytes() == data:
         return sha256, False
-    tmp = path.with_name(path.name + ".tmp")
+    tmp = out.with_name(out.name + ".tmp")
     tmp.write_bytes(data)
-    tmp.replace(path)
+    tmp.replace(out)
     return sha256, True
 
 
-def assemble(raw_dir: Path, db_path: Path, audio_dir: Path) -> dict:
+def assemble(raw_dir: Path, db_path: Path, audio_dir: Path, staged_dir: Path | None = None) -> dict:
+    """Cut each conversation's WAV from raw. One whose bytes differ from
+    audio_dir's is written to staged_dir, for reprocess to move into place once
+    the database describing it is (promote_wavs), or with no staged_dir
+    straight into audio_dir."""
+    staged_dir = audio_dir if staged_dir is None else staged_dir
     db = sqlite3.connect(db_path)
     try:
         bursts = place_bursts(db)
@@ -175,7 +180,7 @@ def assemble(raw_dir: Path, db_path: Path, audio_dir: Path) -> dict:
             wav_file = wav_sha256 = None
             if coverage > 0:
                 wav_file = f"{conversation_id}.wav"
-                wav_sha256, changed = write_wav(audio_dir / wav_file, pcm)
+                wav_sha256, changed = write_wav(audio_dir / wav_file, pcm, staged_dir / wav_file)
                 written += changed
             zero_at = datetime.fromtimestamp(start, timezone.utc).isoformat()
             rows.append((conversation_id, zero_at, end - start, coverage, wav_file, wav_sha256, 0))
@@ -188,6 +193,15 @@ def assemble(raw_dir: Path, db_path: Path, audio_dir: Path) -> dict:
 
     return {"conversations": len(rows), "with_audio": sum(1 for r in rows if r[4]), "wavs_written": written,
             "sealed": len(sealed)}
+
+
+def promote_wavs(staged_dir: Path, audio_dir: Path) -> int:
+    """Move the WAVs assemble staged into audio_dir. staged_dir must be on
+    audio_dir's filesystem, so each move is an atomic rename."""
+    staged = sorted(staged_dir.glob("*.wav"))
+    for wav in staged:
+        wav.replace(audio_dir / wav.name)
+    return len(staged)
 
 
 def remove_stale_wavs(audio_dir: Path, db_path: Path) -> int:

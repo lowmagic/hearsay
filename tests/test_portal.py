@@ -62,13 +62,49 @@ def log_in(client):
     return client.post("/login", data={"username": "me", "password": "correct horse"}, follow_redirects=False)
 
 
-def test_nothing_is_reachable_without_logging_in(portal):
-    client, _, _ = portal
-    assert client.get("/", follow_redirects=False).headers["location"] == "/login"
-    assert client.get("/audio/a0").status_code == 401
+# Every route but /login and /logout, with a form that would write labels if it got through. Pages send
+# the browser to log in; audio and the app's map answer 401, since a player or the app can't show a page.
+@pytest.mark.parametrize("method, path, form, refused", [
+    ("GET", "/", None, "/login"),
+    ("GET", "/conversations", None, "/login"),
+    ("GET", "/conversations/c1", None, "/login"),
+    ("GET", "/day", None, "/login"),
+    ("GET", "/day/2026-01-01", None, "/login"),
+    ("GET", "/places", None, "/login"),
+    ("GET", "/words", None, "/login"),
+    ("GET", "/conversations/c1/audio", None, 401),
+    ("GET", "/audio/a0", None, 401),
+    ("GET", "/places.json", None, 401),
+    ("POST", "/turn", {"turn_id": "a0", "category": "_media"}, "/login"),
+    ("POST", "/turn/undo", {"turn_id": "a0"}, "/login"),
+    ("POST", "/turn/delete", {"turn_id": "a0"}, "/login"),
+    ("POST", "/turn/delete/undo", {"turn_id": "a0"}, "/login"),
+    ("POST", "/forget", {"conversation_id": "c1", "action": "whole"}, "/login"),
+    ("POST", "/forget/undo", {"conversation_id": "c1", "at": "2026-01-01T00:00:00+00:00|2026-01-01T00:00:04+00:00"}, "/login"),
+    ("POST", "/release", {"conversation_id": "c1"}, "/login"),
+    ("POST", "/places", {"action": "name", "name": "Back Room", "latitude": "-26.12", "longitude": "80.14"}, "/login"),
+    ("POST", "/words", {"action": "save", "words": "Xanthe"}, "/login"),
+])
+def test_nothing_is_reachable_or_written_without_logging_in(portal, method, path, form, refused):
+    client, _, labels_dir = portal
 
-    wrong = client.post("/login", data={"username": "me", "password": "nope"}, follow_redirects=False)
-    assert wrong.status_code == 200 and "set-cookie" not in wrong.headers
+    def files() -> dict:
+        return {p: p.read_bytes() for p in labels_dir.rglob("*") if p.is_file()}
+
+    before = files()
+    response = client.request(method, path, data=form, follow_redirects=False)
+    if refused == 401:
+        assert response.status_code == 401
+    else:
+        assert response.status_code == 303 and response.headers["location"] == refused
+    assert files() == before
+
+
+def test_only_the_right_username_and_password_or_a_live_signed_session_log_in(portal, monkeypatch):
+    client, _, _ = portal
+    for username, password in (("me", "nope"), ("you", "correct horse")):
+        wrong = client.post("/login", data={"username": username, "password": password}, follow_redirects=False)
+        assert wrong.status_code == 200 and "set-cookie" not in wrong.headers
     client.cookies.set("hearsay_session", "9999999999.forged")
     assert client.get("/", follow_redirects=False).status_code == 303
 
@@ -76,15 +112,29 @@ def test_nothing_is_reachable_without_logging_in(portal):
     assert log_in(client).status_code == 303
     assert client.get("/", follow_redirects=False).status_code == 200
 
+    # A session past its 30 days, though signed, is refused. Sent by hand: the client's own jar would drop it.
+    cookie = f"hearsay_session={client.cookies['hearsay_session']}"
+    client.cookies.clear()
+    later = time.time() + 31 * 24 * 3600
+    monkeypatch.setattr(time, "time", lambda: later)
+    assert client.get("/", headers={"Cookie": cookie}, follow_redirects=False).headers["location"] == "/login"
 
-def test_the_app_logs_in_with_the_capture_token(portal):
-    client, _, _ = portal
+
+def test_the_app_logs_in_with_the_capture_token(portal, tmp_path):
+    client, db_path, labels_dir = portal
     for wrong in ({}, {"Authorization": "Bearer nope"}):
         response = client.post("/login/app", headers=wrong, follow_redirects=False)
         assert response.status_code == 401 and "set-cookie" not in response.headers
     response = client.post("/login/app", headers={"Authorization": "Bearer capture-token"}, follow_redirects=False)
     assert response.status_code == 303
     assert client.get("/", follow_redirects=False).status_code == 200
+
+    # With no token set up, an empty one doesn't match it.
+    tokenless = TestClient(create_app(db_path, tmp_path / "audio", labels_dir, labels_dir / "stream", "me", "correct horse", "k" * 64))
+    empty = {"Authorization": "Bearer "}
+    response = tokenless.post("/login/app", headers=empty, follow_redirects=False)
+    assert response.status_code == 401 and "set-cookie" not in response.headers
+    assert tokenless.get("/places.json", headers=empty).status_code == 401
 
 
 def test_turn_audio_supports_byte_ranges_for_ios(portal):
@@ -96,10 +146,28 @@ def test_turn_audio_supports_byte_ranges_for_ios(portal):
         assert w.getnframes() == 4 * 16000
         assert int.from_bytes(w.readframes(1), "little") == 10
 
-    probe = client.get("/audio/a2", headers={"Range": "bytes=0-1"})
-    assert probe.status_code == 206
-    assert probe.content == full.content[:2]
-    assert probe.headers["content-range"] == f"bytes 0-1/{len(full.content)}"
+    # A range starting at or past the end has nothing to serve.
+    for start in (len(full.content), len(full.content) + 10):
+        beyond = client.get("/audio/a2", headers={"Range": f"bytes={start}-"})
+        assert beyond.status_code == 416 and beyond.headers["content-range"] == f"bytes */{len(full.content)}"
+
+
+@pytest.mark.parametrize("asked, served", [
+    ("bytes=0-1", slice(0, 2)),
+    ("bytes=0-", slice(0, None)),  # open-ended: to the end
+    ("bytes=-10", slice(-10, None)),  # suffix: the last 10
+    ("bytes=-1", slice(-1, None)),
+    ("bytes=-999999999", slice(0, None)),  # a suffix longer than the file is all of it
+    ("bytes=100-999999999", slice(100, None)),  # an end past the file stops at it
+])
+def test_turn_audio_serves_the_byte_range_asked_for(portal, asked, served):
+    client, _, _ = portal
+    log_in(client)
+    full = client.get("/audio/a2").content
+    part = client.get("/audio/a2", headers={"Range": asked})
+    start, stop, _ = served.indices(len(full))
+    assert part.status_code == 206 and part.content == full[served]
+    assert part.headers["content-range"] == f"bytes {start}-{stop - 1}/{len(full)}"
 
 
 def test_a_spot_where_the_owner_spent_time_can_be_named(portal):
@@ -238,6 +306,10 @@ def test_all_not_me_and_all_media_mark_the_turns_hearsay_is_sure_of_and_leave_th
     # b7's own voice close to the owner's. The operator tags a6, which Hearsay couldn't decide.
     db.execute("UPDATE turn_speakers SET basis = 'diarization', owner_similarity = NULL WHERE turn_id = 'b1'")
     db.execute("UPDATE turn_speakers SET basis = 'diarization', owner_similarity = 0.3 WHERE turn_id = 'b7'")
+    # a0 and a2 are the owner's, by voice and by channel, though they sound like media: never checked, never offered.
+    db.execute("UPDATE turn_speakers SET label = 'owner', basis = 'voice' WHERE turn_id = 'a0'")
+    db.execute("UPDATE turn_speakers SET label = 'owner', basis = 'channel' WHERE turn_id = 'a2'")
+    db.executemany("INSERT INTO turn_media VALUES (?, 0.95)", [("a0",), ("a2",)])
     db.commit()
     db.close()
     client.post("/turn", data={"turn_id": "a6", "category": "_stranger"})
@@ -247,9 +319,11 @@ def test_all_not_me_and_all_media_mark_the_turns_hearsay_is_sure_of_and_leave_th
     picks = dict(re.findall(r"id='c1-(\d)' class='turn[^']*' data-start='[\d.]+' data-pick='(\w+)'", page))
     assert picks == {"1": "notme", "3": "media", "6": "notme"}
     unsure = dict(re.findall(r"id='c1-(\d)' class='turn[^']* unsure'.*?<span class='unsure-why'>([^<]+)", page))
-    assert unsure == {"0": "Not sure who spoke", "2": "Not sure who spoke", "4": "Not sure who spoke",
-                      "5": "Might be media", "7": "Not me by its speaker, but its voice is close to yours"}
+    assert unsure == {"4": "Not sure who spoke", "5": "Might be media",
+                      "7": "Not me by its speaker, but its voice is close to yours"}
     assert "<button type=\"button\" value=\"notme\">All not me</button>" in page
+    front = client.get("/").text
+    assert "/audio/b3" in front and "/audio/a0" not in front and "/audio/a2" not in front
 
     # Throwing out what All not me checked keeps the turns between them.
     client.post("/forget", data={"conversation_id": "c1", "action": "checked", "turn_id": ["b1", "a6"]})

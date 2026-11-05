@@ -95,6 +95,18 @@ def test_assembles_each_conversation_from_the_stream(tmp_path):
     assert remove_stale_wavs(audio_dir, db_path) == 1
     assert sorted(p.name for p in audio_dir.iterdir()) == ["c-audio.wav"]
 
-    first = (audio_dir / "c-audio.wav").read_bytes()
-    assemble(raw, db_path, audio_dir)
-    assert (audio_dir / "c-audio.wav").read_bytes() == first
+    # A WAV is written only when its bytes change: nothing new leaves the file alone.
+    wav = audio_dir / "c-audio.wav"
+    first, before = wav.read_bytes(), wav.stat()
+    assert assemble(raw, db_path, audio_dir)["wavs_written"] == 0
+    after = wav.stat()
+    assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+    assert wav.read_bytes() == first
+
+    # New sample values of the same length change the bytes but not the size.
+    write_payload(raw, "audio", seconds(5), (7).to_bytes(2, "little") * (CHUNK // 2),
+                  [["sample_rate", "16000"], ["uid", "u"]])
+    rebuild(raw, db_path)
+    add_conversations(db_path, [("c-audio", T.timestamp(), seconds(20).timestamp(), 15.0, 0)])
+    assert assemble(raw, db_path, audio_dir)["wavs_written"] == 1
+    assert len(wav.read_bytes()) == len(first) and wav.read_bytes() != first

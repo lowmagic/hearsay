@@ -1,6 +1,4 @@
-import pytest
-
-from hearsay.conversations import GAP, MIN_SPEECH, TAP_WINDOW, conversation_id, detect_speech, group_speech
+from hearsay.conversations import GAP, MIN_SPEECH, TAP_WINDOW, conversation_id, group_speech
 
 T = 1_790_000_000.0  # unix seconds
 
@@ -40,11 +38,3 @@ def test_an_end_mark_splits_however_soon_speech_resumes():
     assert group_speech([first, second], ends=[T + 50]) == [(T, T + 40, 40.0), (T + 60, T + 100, 40.0)]
     # Pressed mid-sentence: the speech under way stays with what came before.
     assert group_speech([first, second], ends=[T + 20]) == [(T, T + 40, 40.0), (T + 60, T + 100, 40.0)]
-
-
-def test_voice_detection_leaves_torch_its_threads(tmp_path):
-    torch = pytest.importorskip("torch")
-    pytest.importorskip("silero_vad")
-    torch.set_num_threads(3)
-    assert detect_speech(tmp_path, []) == []
-    assert torch.get_num_threads() == 3

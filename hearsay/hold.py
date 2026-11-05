@@ -18,7 +18,8 @@ longer fits the span, it's held again, which is the safe way to be wrong.
 
 The stream never withdraws a conversation it has published (hearsay/stream.py):
 a consumer would take that for speech that vanished. So whatever was in the
-stream before the hold began stays, and only throwing out deletes.
+stream before the hold began stays, a conversation late audio gives a new id
+isn't held if it takes in published speech, and only throwing out deletes.
 """
 
 import json

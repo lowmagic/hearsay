@@ -319,8 +319,11 @@ def check(env: dict[str, Path]) -> int:
         built = {}
         for name, records_dir in (("raw", None), ("records", env["records_dir"])):
             built[name] = Path(scratch) / f"{name}.sqlite"
+            # WAVs that differ from the live ones are written here, never over them.
+            staged_audio = Path(scratch) / f"{name}-audio"
+            staged_audio.mkdir()
             print(f"Building from {name}:")
-            build(env, built[name], records_dir)
+            build(env, built[name], staged_audio, records_dir)
         db = sqlite3.connect(built["raw"])
         db.execute("ATTACH DATABASE ? AS other", (str(built["records"]),))
         differ = 0

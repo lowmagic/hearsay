@@ -91,6 +91,10 @@ def test_every_generation_of_labels_lands_on_the_right_turns(tmp_path):
         # Slice 6: a span relative to Omi conversation omi1's time 0.
         + json.dumps({"turns": [{"turn_id": "gone", "conversation_id": "omi1", "start": 19.5, "end": 25.5}],
                       "label": "not_owner"}) + "\n"
+        # Absolute times. A later answer relabels a turn; a span over only 30%
+        # of turn 2 (2.9 s long) is too little to label it.
+        + json.dumps({"at": [wall(zero_at, SHIFT + 0.5, SHIFT + 6.0)], "label": "not_owner"}) + "\n"
+        + json.dumps({"at": [wall(zero_at, SHIFT + 9.1, SHIFT + 9.97)], "label": "owner"}) + "\n"
     )
     (labels / "tags.jsonl").write_text(
         # Omi segment omi-b covers most of turn 1 and all of turn 2.
@@ -98,6 +102,9 @@ def test_every_generation_of_labels_lands_on_the_right_turns(tmp_path):
         + json.dumps({"type": "name", "segment_ids": ["no-longer-exists"], "name": "Nobody"}) + "\n"
         # Now: absolute times, which outlive any transcript or boundary change.
         + json.dumps({"type": "skip", "at": [wall(zero_at, SHIFT + 20.0, SHIFT + 25.0)]}) + "\n"
+        # Renaming a person renames every turn so far; an empty name takes one back.
+        + json.dumps({"type": "rename", "from": "Bob", "to": "Robert"}) + "\n"
+        + json.dumps({"type": "name", "at": [wall(zero_at, SHIFT + 9.1, SHIFT + 12.0)], "name": ""}) + "\n"
     )
     # Song or talk (hearsay-label music), by absolute time too; the latest answer wins.
     (labels / "music.jsonl").write_text(
@@ -110,9 +117,8 @@ def test_every_generation_of_labels_lands_on_the_right_turns(tmp_path):
     found = db.execute("SELECT turn_id, kind, value FROM operator_input ORDER BY turn_id, kind").fetchall()
     db.close()
     assert found == [
-        ("c1:0000", "label", "owner"),
-        ("c1:0001", "name", "Bob"),
-        ("c1:0002", "name", "Bob"),
+        ("c1:0000", "label", "not_owner"),
+        ("c1:0001", "name", "Robert"),
         ("c1:0003", "label", "not_owner"),
         ("c1:0003", "music", "talk"),
         ("c1:0003", "skip", None),
