@@ -68,6 +68,12 @@ for dir in "$NAS_LABELS" "$NAS_TRANSCRIPTS" "$NAS_IMPORTS"; do
     chown "$APPS_UID:$APPS_GID" "$dir"
     chmod 2770 "$dir"
 done
+# The dev box leaves failure markers here, and reprocess deletes them. Made
+# here, not by the dev box's ssh login (umask 022), so the containers can
+# write in it.
+mkdir -p "$NAS_TRANSCRIPTS/failed"
+chown "$APPS_UID:$APPS_GID" "$NAS_TRANSCRIPTS/failed"
+chmod 2770 "$NAS_TRANSCRIPTS/failed"
 
 say "Backups of the audio datasets"
 # Input audio isn't precious: what it gave is kept in records
@@ -138,6 +144,17 @@ def named(snapshot, schema):
 
 def own_snapshots(dataset):
     return sorted(name for name, _ in snapshots(dataset) if named(name, SCHEMA))
+
+
+def unreplicated(replication):
+    """Audio datasets whose newest own snapshot isn't on the replica. A
+    snapshot shows on the target only once it's fully received, so this also
+    catches a replica dataset left behind by a replication cut short."""
+    def newest(d):
+        return own_snapshots(d)[-1].split("@", 1)[1] if own_snapshots(d) else None
+    return [d for d in AUDIO
+            if newest(d) is None
+            or newest(d) not in {name.split("@", 1)[1] for name, _ in snapshots(target(replication, d))}]
 
 
 def below(parent, dataset):
@@ -282,13 +299,16 @@ def run():
         sys.exit(f"ERROR: no {SCHEMA} snapshot of {', '.join(d for d in started if not own_snapshots(d))} after"
                  " 2 minutes. See Data Protection -> Periodic Snapshot Tasks in the TrueNAS UI.")
     replication = own_replication()
-    if all(zfs_list("-o", "name", target(replication, d)) for d in AUDIO):
-        print(f"snapshots and replicas exist in {REPLICA}")
+    if not unreplicated(replication):
+        print(f"snapshots exist and are replicated to {REPLICA}")
         return
-    print(f"Replicating to {REPLICA} for the first time...")
+    print(f"Replicating to {REPLICA}...")
     if subprocess.run(["midclt", "call", "-j", "-jp", "description", "replication.run", str(replication["id"])],
                       stdout=subprocess.DEVNULL).returncode:
         sys.exit(f"ERROR: replication to {REPLICA} failed (above)")
+    if missing := unreplicated(replication):
+        sys.exit(f"ERROR: the newest snapshot of {', '.join(missing)} isn't in {REPLICA} after replicating."
+                 " See Data Protection -> Replication Tasks in the TrueNAS UI.")
 
 
 def plan(path):
@@ -325,6 +345,9 @@ def destroy(path):
     current = {name for _, name, _ in old_backups()}
     if any(name not in current for _, name in planned):
         sys.exit("ERROR: the old backups changed since they were listed. Re-run to list them again.")
+    # And only while the new backups hold everything.
+    if missing := unreplicated(own_replication()):
+        sys.exit(f"ERROR: {', '.join(missing)} isn't replicated to {REPLICA} yet, so nothing is destroyed. Re-run.")
     for kind, name in planned:
         if kind == "snapshot":
             call("pool.snapshot.delete", name)
@@ -353,8 +376,8 @@ def verify():
     if replication is None or differs(replication, replication_wanted(have.values())):
         problems.append(f"no replication to {REPLICA} as set here")
     else:
-        problems += [f"{target(replication, d)} doesn't exist" for d in AUDIO
-                     if not zfs_list("-o", "name", target(replication, d))]
+        problems += [f"the newest {SCHEMA} snapshot of {d} isn't in {target(replication, d)}"
+                     for d in unreplicated(replication)]
     problems += [f"{name} is still there" for _, name, _ in old_backups()]
     if problems:
         sys.exit("ERROR: the audio datasets' backups aren't as they should be:\n  " + "\n  ".join(problems))
