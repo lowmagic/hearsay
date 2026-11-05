@@ -20,7 +20,10 @@ every turn ever recorded, from these. What came out of the audio is fixed
 once sealed: a new speaker model or vocabulary applies to sealed
 conversations only when they're unsealed on purpose, while their audio is
 still kept (`python -m hearsay.records unseal <date>`). An import or late
-pendant audio landing behind the line unseals back to it on its own.
+pendant audio landing behind the line, or less than GAP past it where its
+speech would join the last sealed conversation, unseals back to it on its
+own, and so does an enrollment window added once part of it is behind the
+line, whose audio a build from records no longer reads.
 
 The records dir, beside raw (/mnt/fast/hearsay/records):
 
@@ -31,7 +34,7 @@ The records dir, beside raw (/mnt/fast/hearsay/records):
                                  from it except its audio, so its file is
                                  never opened again; per sealed import, its name
     enrollment.jsonl             the owner's enrollment pieces, embedded, for
-                                 windows behind the line
+                                 windows that start behind the line
 
 seal.json is written last, so a run that stops partway seals nothing: a
 record or digest is used only if it lies behind the line.
@@ -53,7 +56,7 @@ from datetime import datetime
 from pathlib import Path
 
 from hearsay.affect import AFFECT_VERSION
-from hearsay.conversations import VAD_VERSION
+from hearsay.conversations import GAP, VAD_VERSION
 from hearsay.music import MUSIC_VERSION
 from hearsay.speakers import EMBED_VERSION
 from hearsay.transcribe import settings_for
@@ -100,12 +103,12 @@ CREATE TABLE sealed_turns (
     dominance REAL,
     valence REAL
 );
--- The owner's enrollment pieces behind the line, embedded.
+-- The owner's enrollment pieces for windows that start behind the line, embedded.
 CREATE TABLE sealed_enrollment (
     start TEXT NOT NULL,
     end TEXT NOT NULL,
     coverage REAL NOT NULL,
-    vector BLOB NOT NULL
+    vector BLOB                      -- NULL: the window had no usable piece
 );
 """
 
@@ -160,8 +163,9 @@ def restore(db_path: Path, records_dir: Path | None) -> dict:
                    *(t["music"] or (None,) * 3), *(t["affect"] or (None,) * 3)) for turn_id, t in record["turns"].items()]
     # One entry per window: a run that stopped before moving the line may have appended it already.
     windows = {(e["start"], e["end"]): e for e in (lines(records_dir / "enrollment.jsonl") if records_dir else [])
-               if datetime.fromisoformat(e["end"]).timestamp() <= line}
-    enrollment = [(e["start"], e["end"], e["coverage"], blob(v)) for e in windows.values() for v in e["vectors"]]
+               if datetime.fromisoformat(e["start"]).timestamp() < line}
+    enrollment = [(e["start"], e["end"], e["coverage"], blob(v))
+                  for e in windows.values() for v in e["vectors"] or [None]]
     db = sqlite3.connect(db_path)
     try:
         db.executescript(SCHEMA)
@@ -233,11 +237,15 @@ def seal(db_path: Path, records_dir: Path, transcripts_dir: Path, labels_dir: Pa
         known = sorted(set(read_seal(records_dir)["imports"])
                        | {file for (file,) in db.execute("SELECT file FROM imported_audio")})
         pieces = {}
+        # A window is recorded once any of it is behind the line, as audio there is no longer read;
+        # one without a usable piece too, so it isn't cut again.
         for start, end, coverage, vector in db.execute(
-                "SELECT ep.start, ep.end, oe.coverage, ep.vector FROM enrollment_pieces ep"
-                " JOIN owner_enrollment oe USING (start, end) ORDER BY ep.rowid"):
-            if old < datetime.fromisoformat(end).timestamp() <= line:
-                pieces.setdefault((start, end, coverage), []).append(text(vector))
+                "SELECT oe.start, oe.end, oe.coverage, ep.vector FROM owner_enrollment oe"
+                " LEFT JOIN enrollment_pieces ep USING (start, end) ORDER BY oe.rowid, ep.rowid"):
+            if old <= datetime.fromisoformat(start).timestamp() < line:
+                found = pieces.setdefault((start, end, coverage), [])
+                if vector is not None:
+                    found.append(text(vector))
     finally:
         db.close()
 
@@ -255,38 +263,50 @@ def seal(db_path: Path, records_dir: Path, transcripts_dir: Path, labels_dir: Pa
             datetime.fromtimestamp(line).isoformat(timespec="minutes")}
 
 
-def late(db_path: Path, records_dir: Path, imports_dir: Path) -> float | None:
-    """The earliest audio behind the line that arrived after it was drawn: an
-    import, or pendant audio downloaded late. None if there's none."""
+def late(db_path: Path, records_dir: Path, imports_dir: Path, labels_dir: Path) -> float | None:
+    """The earliest audio that arrived after the line was drawn and that a
+    build from records would leave out or group apart: an import or pendant
+    audio downloaded late, behind the line or less than GAP past it (its
+    speech would join the conversation the line ends), or an enrollment
+    window added that starts behind it. None if there's none."""
     seal_state = read_seal(records_dir)
+    line = seal_state["line"]
     found = []
     db = sqlite3.connect(db_path)
     try:
         found += [first for first, received in db.execute(
             "SELECT first_at, received_at FROM payloads WHERE type IN ('capture', 'audio') AND NOT sealed"
-            " AND first_at < ?", (seal_state["line"],))
+            " AND first_at < ?", (line + GAP,))
             if datetime.fromisoformat(received).timestamp() > seal_state["sealed_at"]]
     finally:
         db.close()
     for sidecar in imports_dir.glob("*.json"):
         record = json.loads(sidecar.read_text())
         start = datetime.fromisoformat(record["start"]).timestamp()
-        if record["file"] not in seal_state["imports"] and start < seal_state["line"]:
+        if record["file"] not in seal_state["imports"] and start < line + GAP:
+            found.append(start)
+    recorded = {(e["start"], e["end"]) for e in lines(records_dir / "enrollment.jsonl")
+                if datetime.fromisoformat(e["start"]).timestamp() < line}
+    enrollment = labels_dir / "enrollment.json"
+    for window in json.loads(enrollment.read_text()) if enrollment.exists() else []:
+        start = datetime.fromisoformat(window["start"]).timestamp()
+        if start < line and (window["start"], window["end"]) not in recorded:
             found.append(start)
     return min(found, default=None)
 
 
 def unseal(records_dir: Path, before: float) -> dict:
     """Move the line back to the end of the last sealed conversation that ended
-    before `before`, so the next reprocess redoes everything after it from raw.
-    Their records are deleted: the audio they came from must still be kept."""
+    more than GAP before `before`, so the next reprocess redoes everything
+    after it from raw: speech from `before` on joins one that ended closer,
+    as it would from raw. Their records are deleted: the audio they came
+    from must still be kept."""
     state = read_seal(records_dir)
-    line = state["line"]
-    if before >= line:
-        return {"unsealed": 0}
     folder = records_dir / "conversations"
     records = {path: json.loads(path.read_text())["conversation"] for path in folder.glob("*.json")}
-    keep = max((c["end"] for c in records.values() if c["end"] < before), default=0.0)
+    keep = max((c["end"] for c in records.values() if c["end"] + GAP < before), default=0.0)
+    if keep >= state["line"]:
+        return {"unsealed": 0}
     gone = [path for path, c in records.items() if c["end"] > keep]
     write_json(records_dir / "seal.json", {"line": keep, "sealed_at": time.time(), "imports": state["imports"]})
     for path in gone:
@@ -295,7 +315,7 @@ def unseal(records_dir: Path, before: float) -> dict:
     write_lines(records_dir / "payloads.jsonl", [d for d in lines(records_dir / "payloads.jsonl")
                                                  if d["last_at"] < keep])
     write_lines(records_dir / "enrollment.jsonl", [e for e in lines(records_dir / "enrollment.jsonl")
-                                                   if datetime.fromisoformat(e["end"]).timestamp() <= keep])
+                                                   if datetime.fromisoformat(e["start"]).timestamp() < keep])
     return {"unsealed": len(gone), "line": datetime.fromtimestamp(keep).isoformat(timespec="minutes") if keep else None}
 
 

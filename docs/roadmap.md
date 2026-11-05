@@ -517,8 +517,9 @@ Decided 2026-11-02 (`hearsay/records.py`):
 - Re-running sealed conversations from audio is deliberate: a Words update
   or a new model reaches only unsealed ones, and `python -m
   hearsay.records unseal <date>` moves the line back while the audio is
-  kept. An import or late pendant audio behind the line unseals back to it
-  by itself.
+  kept. An import or late pendant audio behind the line (or less than GAP
+  past it, where its speech joins the last sealed conversation), or an
+  enrollment window added behind it, unseals back to it by itself.
 - Tone stays the owner's only (hearsay/affect.py: others' emotional state
   isn't inferred), so a sealed turn that becomes the owner's later, by a new
   enrollment or threshold, has no tone score.
