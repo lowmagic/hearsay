@@ -83,9 +83,10 @@ def build(env: dict[str, Path], staging: Path, staged_audio: Path, records_dir: 
     try:
         sealed, imports = sealed_payloads(records_dir)
         report(f"Rebuilt from {env['raw_dir']}:", rebuild(env["raw_dir"], staging, sealed))
-        if unseal_late and records_dir and (when := late(staging, records_dir, env["imports_dir"])) is not None:
-            # Audio arrived behind the line: redo from just before it.
-            report("Audio arrived behind the seal line; unsealed:", unseal(records_dir, when))
+        if unseal_late and records_dir and (when := late(staging, records_dir, env["imports_dir"],
+                                                         env["labels_dir"])) is not None:
+            # Audio or an enrollment window that a build from records would miss: redo from just before it.
+            report("Arrived late at the seal line; unsealed:", unseal(records_dir, when))
             sealed, imports = sealed_payloads(records_dir)
             report(f"Rebuilt from {env['raw_dir']}:", rebuild(env["raw_dir"], staging, sealed))
         report("Sealed conversations, from their records:", restore(staging, records_dir))

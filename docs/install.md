@@ -152,10 +152,13 @@ everything after it from raw:
 sudo docker compose -f /mnt/fast/repos/hearsay/install/compose.yaml run --rm reprocess python -m hearsay.records unseal 2026-10-01
 ```
 
-An import, or pendant audio downloaded late, that lands behind the line
-unseals back to it by itself. To check that a build from the records equals
-a build from raw (slow: it builds the database twice, once reading all the
-audio):
+An import, or pendant audio downloaded late, that lands behind the line, or
+less than three minutes past it where its speech joins the last sealed
+conversation, unseals back to it by itself, and so does an enrollment window
+registered once the line has passed its start (so enroll from the last week's
+audio, or everything since the window is redone). To check that a build from
+the records equals a build from raw (slow: it builds the database twice, once
+reading all the audio):
 
 ```sh
 sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay/install/compose.yaml run --rm reprocess python -m hearsay.records check
