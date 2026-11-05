@@ -66,17 +66,9 @@ def place_bursts(db: sqlite3.Connection) -> list[tuple[float, float, list[str]]]
         "SELECT p.path, p.received_at, p.body_bytes, a.sample_rate FROM audio_chunks a"
         " JOIN payloads p ON p.path = a.payload_path ORDER BY p.received_at, p.path"
     ).fetchall()
-    bursts = []  # [first receipt, last receipt, bytes, paths]
-    for path, received_at, body_bytes, sample_rate in rows:
+    for path, _, _, sample_rate in rows:
         if sample_rate != SAMPLE_RATE:
             raise ValueError(f"{path}: sample rate {sample_rate}, expected {SAMPLE_RATE}")
-        t = timestamp(received_at)
-        if bursts and t - bursts[-1][1] < BURST_GAP:
-            bursts[-1][1] = t
-            bursts[-1][2] += body_bytes
-            bursts[-1][3].append(path)
-        else:
-            bursts.append([t, t, body_bytes, [path]])
 
     placed = []
     if db.execute("SELECT 1 FROM sqlite_master WHERE name = 'imported_audio'").fetchone():
@@ -89,6 +81,29 @@ def place_bursts(db: sqlite3.Connection) -> list[tuple[float, float, list[str]]]
             "SELECT start, duration, pcm_path FROM captured_audio ORDER BY start"
         ):
             placed.append((start, start + duration, [pcm_path]))
+    placed += place_omi([(path, received_at, body_bytes) for path, received_at, body_bytes, _ in rows])
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name = 'mac_audio'").fetchone():
+        for start, duration, pcm_path in db.execute(
+            "SELECT start, duration, pcm_path FROM mac_audio WHERE channel = 'mixed' ORDER BY start"
+        ):
+            placed.append((start, start + duration, [pcm_path]))
+    return placed
+
+
+def place_omi(rows: list[tuple[str, str, int]]) -> list[tuple[float, float, list[str]]]:
+    """(start, end, body paths) per burst of Omi's webhook audio, from
+    (path, received_at, body bytes) per chunk in the order received. Also how
+    hearsay/retention.py finds where a sealed chunk's audio lies."""
+    bursts = []  # [first receipt, last receipt, bytes, paths]
+    for path, received_at, body_bytes in rows:
+        t = timestamp(received_at)
+        if bursts and t - bursts[-1][1] < BURST_GAP:
+            bursts[-1][1] = t
+            bursts[-1][2] += body_bytes
+            bursts[-1][3].append(path)
+        else:
+            bursts.append([t, t, body_bytes, [path]])
+    placed = []
     position = None
     for first_receipt, _, nbytes, paths in bursts:
         duration = nbytes / BYTES_PER_SECOND
@@ -98,11 +113,6 @@ def place_bursts(db: sqlite3.Connection) -> list[tuple[float, float, list[str]]]
             position = by_receipt
         placed.append((position, position + duration, paths))
         position += duration
-    if db.execute("SELECT 1 FROM sqlite_master WHERE name = 'mac_audio'").fetchone():
-        for start, duration, pcm_path in db.execute(
-            "SELECT start, duration, pcm_path FROM mac_audio WHERE channel = 'mixed' ORDER BY start"
-        ):
-            placed.append((start, start + duration, [pcm_path]))
     return placed
 
 

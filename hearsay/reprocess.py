@@ -16,15 +16,17 @@ leaves the previous database and audio in place, and a run with nothing new
 writes almost nothing to disk (the NAS keeps snapshots, so every rewritten
 byte is kept many times). A schema change replaces the changed table inside
 the same transaction. Deleting the database is always safe: the next run
-fills a new one from raw.
+fills a new one from raw and the records.
 
 Conversations whose hold has ended (hearsay/hold.py) are sealed at the end of
 a run (hearsay/records.py), and later runs take them from their records
 without reading their audio, so a run with nothing new reads only the hold's.
-Slow steps (voice detection, speaker embeddings, the audio models) are cached
-by audio content next to the database. A run waits for any other to finish
-(one corral starts and one started by hand would otherwise overlap and break
-each other).
+Then what's due is deleted or cut from sealed audio: thrown-out stretches,
+and audio past retention (hearsay/retention.py). Slow steps (voice
+detection, speaker embeddings, the audio models) are cached by audio
+content next to the database, and what no run has used for HOLD is dropped.
+A run waits for any other to finish (one corral starts and one started by
+hand would otherwise overlap and break each other).
 """
 
 import fcntl
@@ -37,13 +39,13 @@ from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 
-from hearsay import conversations, speakers
+from hearsay import conversations, retention, speakers
 from hearsay.assemble import assemble, promote_wavs, remove_stale_wavs
 from hearsay.cache import Cache
 from hearsay.capture import load_captures, remove_stale_capture_pcm
 from hearsay.conversations import find_conversations
 from hearsay.forget import forget
-from hearsay.hold import record_releases
+from hearsay.hold import HOLD, record_releases
 from hearsay.imports import load_imports, remove_stale_import_pcm
 from hearsay.media import score_media
 from hearsay.music import score_music
@@ -93,12 +95,15 @@ def build(env: dict[str, Path], staging: Path, staged_audio: Path, records_dir: 
     try:
         sealed, imports = sealed_payloads(records_dir)
         report(f"Rebuilt from {env['raw_dir']}:", rebuild(env["raw_dir"], staging, sealed))
-        if unseal_late and records_dir and (when := late(staging, records_dir, env["imports_dir"],
-                                                         env["labels_dir"])) is not None:
-            # Audio or an enrollment window that a build from records would miss: redo from just before it.
-            report("Arrived late at the seal line; unsealed:", unseal(records_dir, when))
-            sealed, imports = sealed_payloads(records_dir)
-            report(f"Rebuilt from {env['raw_dir']}:", rebuild(env["raw_dir"], staging, sealed))
+        if unseal_late and records_dir:
+            when, ignored = late(staging, records_dir, env["imports_dir"], env["labels_dir"])
+            if ignored:
+                report("Arrived late behind the retention line, so left out:", ignored)
+            if when is not None:
+                # Audio or an enrollment window that a build from records would miss: redo from just before it.
+                report("Arrived late at the seal line; unsealed:", unseal(records_dir, when))
+                sealed, imports = sealed_payloads(records_dir)
+                report(f"Rebuilt from {env['raw_dir']}:", rebuild(env["raw_dir"], staging, sealed))
         report("Sealed conversations, from their records:", restore(staging, records_dir))
         # Decoded once and cached; the cache is pruned in run, once this database is in place.
         report(f"Imported audio from {env['imports_dir']}:",
@@ -144,6 +149,12 @@ def run(env: dict[str, Path]) -> None:
               f"{remove_stale_capture_pcm(capture_pcm(env), env['db'])} stale decoded capture run(s).")
         report(f"Sealed in {env['records_dir']}:",
                seal(env["db"], env["records_dir"], env["transcripts_dir"], env["labels_dir"]))
+        report("Deleted and cut (hearsay/retention.py):", retention.run(env))
+        cache = Cache(env["db"].parent / "cache.sqlite")
+        try:
+            print(f"Dropped {cache.prune(HOLD)} cached result(s) no run has used for {HOLD // 86400} days.")
+        finally:
+            cache.close()
 
 
 def schema(db: sqlite3.Connection, name: str) -> dict[str, tuple[str, str]]:
