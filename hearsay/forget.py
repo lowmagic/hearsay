@@ -23,8 +23,8 @@ only until then.
 
 Once a stretch's conversation is sealed, hearsay/retention.py silences it
 in the WAV, cuts its words from the record and transcript, and deletes the
-raw uploads and imports wholly inside it; the rest of its audio goes with
-everything else 60 days after the conversation ends.
+raw uploads and imports wholly inside it; the rest of its raw audio goes
+60 days after it ends, as all audio does.
 """
 
 import json

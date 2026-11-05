@@ -261,6 +261,28 @@ def test_the_report_says_what_the_next_run_would_do_and_changes_nothing(tmp_path
     assert retention.report(env, NOW)["sealed conversations cut, thrown out"].startswith("0:")
 
 
+def test_a_transcript_naming_no_conversation_goes_and_the_rest_stay(tmp_path):
+    d, db_path, _ = world(tmp_path)
+    env = env_of(d, db_path)
+    db = sqlite3.connect(db_path)
+    db.execute("INSERT INTO conversation_audio VALUES ('c2', ?, 60, 1, 'c2.wav', 'sha-c2', 0)", (iso(NOW - DAY),))
+    db.commit()
+    db.close()
+    # c2's, held; one made before boundaries moved, and its failure marker; one named in Omi's days.
+    orphans = {"c20261015T101500Z.json", "failed/c20261015T101500Z.json", "055e16ff-892c-4491-81f5-289cfd8311f1.json"}
+    for name in {"c2.json"} | orphans:
+        (d["transcripts"] / name).write_text("{}")
+
+    found = retention.plan(env, d["records"], NOW)
+    assert {x.name for x in found.deletions if x.why == "no conversation"} == orphans
+    assert retention.summary(found)["transcript files deleted, no conversation"].startswith("3, ")
+    retention.run(env, now=NOW)
+    # c1 is sealed and less than 60 days old, c2 isn't sealed; c0's went past retention.
+    assert files_in(d["transcripts"]) == {"transcripts/c1.json", "transcripts/c2.json"}
+    assert {e["name"]: e["end"] for e in records.deleted(d["records"]) if e["why"] == "no conversation"} == {
+        name: None for name in orphans}
+
+
 def test_retention_deletes_audio_60_days_after_its_conversation_but_the_owner_s_enrollment(tmp_path):
     d, db_path, uploads = world(tmp_path)
     env = env_of(d, db_path)
@@ -435,6 +457,8 @@ def test_a_reprocess_deletes_exactly_what_was_thrown_out_or_is_past_retention(tm
             {"conversation_id": cid, "wav_sha256": audio[cid][1], "settings": settings_for([]), "segments": segments}))
     (env["labels_dir"] / "forget.jsonl").write_text(json.dumps(
         {"type": "forget", "at": [iso(c1 + 5.5), iso(c1 + 10)], "reason": "", "tagged_at": iso(now)}) + "\n")
+    # Made before the conversation's boundaries moved: no conversation has its id now.
+    (env["transcripts_dir"] / "c20261001T000000Z.json").write_text("{}")
     kept = (env["raw_dir"], env["imports_dir"], env["audio_dir"], env["transcripts_dir"])
     before = files_in(*kept)
 
@@ -444,7 +468,8 @@ def test_a_reprocess_deletes_exactly_what_was_thrown_out_or_is_past_retention(tm
     deleted = records.deleted(env["records_dir"])
     uploads = {e["name"]: e["why"] for e in deleted if e["kind"] == "upload"}
     assert gone == ({f for name in uploads for f in raw_files(name, "raw_dir")} | import_files("old.m4a", "imports_dir")
-                    | {f"audio_dir/{ids[0]}.wav", f"transcripts_dir/{ids[0]}.json"})
+                    | {f"audio_dir/{ids[0]}.wav", f"transcripts_dir/{ids[0]}.json",
+                       "transcripts_dir/c20261001T000000Z.json"})
     # c0's 40 s of audio but the two seconds in the enrollment window; Omi's text stays.
     assert list(uploads.values()).count("retention") == 40 - 2
     assert len(list((env["raw_dir"] / "transcript").rglob("*.body"))) == 1

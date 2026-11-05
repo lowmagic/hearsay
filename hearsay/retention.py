@@ -23,13 +23,16 @@ audio changed); the conversations around it, minutes of silence away, are
 rebuilt exactly.
 
 Past RETAIN, everything that is audio, the owner's too: raw capture and Omi
-audio uploads whose audio ends before now - RETAIN, imports that end before
-it, and the WAVs and transcript files of conversations that ended before it.
-Raw uploads and imports overlapping an enrollment window
+audio uploads whose own audio ends before now - RETAIN, imports that end
+before it, and the WAVs and transcript files of conversations that ended
+before it. Raw uploads and imports overlapping an enrollment window
 (labels/enrollment.json) are kept for good, so the owner can be enrolled in
 a new speaker model. Omi's transcript and memory payloads are text, not
 audio, and are kept. Transcript files stay until then, cut as above:
 `python -m hearsay.records check` and an unseal within the window read them.
+A transcript file or failure marker naming no conversation the database
+now has goes on any run: boundaries moved while it was held, and nothing
+will read it again, nor cut a stretch thrown out from it.
 Decoded audio needs nothing here: only audio not yet sealed is decoded, so
 the decoded caches drop sealed audio on the next run (hearsay/capture.py,
 hearsay/imports.py), and the model cache drops what no run has used for HOLD
@@ -65,7 +68,7 @@ from hearsay.assemble import BYTES_PER_SECOND, SAMPLE_RATE, place_omi, timestamp
 from hearsay.records import deleted, iso, lines, read_seal, seal, write_json
 from hearsay.turns import split_turns
 
-RETAIN = 60 * 86400  # seconds: audio is kept this long after its conversation ends
+RETAIN = 60 * 86400  # seconds: kept this long after the audio, or for a WAV or transcript its conversation, ends
 
 # The longest one of the pendant's frames lasts, in seconds.
 FRAME = max(capture.FRAME_SAMPLES.values()) / SAMPLE_RATE
@@ -73,11 +76,11 @@ FRAME = max(capture.FRAME_SAMPLES.values()) / SAMPLE_RATE
 
 class Deletion(NamedTuple):
     kind: str                # upload, import, wav or transcript
-    why: str                 # thrown out or retention
+    why: str                 # thrown out, retention, or no conversation
     name: str                # the upload's raw path, the import's file, or the file's name
     files: tuple[Path, ...]  # in the order deleted: a sidecar before its body
     size: int                # bytes
-    end: float               # unix seconds its audio ends; a WAV's or transcript's conversation's end
+    end: float | None        # unix seconds its audio ends; a WAV's or transcript's conversation's end, if it has one
     logged: bool             # in deleted.jsonl already: a run stopped before deleting it
 
 
@@ -230,6 +233,7 @@ def plan(env: dict[str, Path], records_dir: Path, now: float) -> Plan:
     try:
         stretches = sorted(set(db.execute("SELECT start, end FROM forgotten")))
         omi = omi_spans(db)
+        live = {cid for (cid,) in db.execute("SELECT conversation_id FROM conversation_audio")}
     finally:
         db.close()
     # Only stretches in a sealed conversation: elsewhere the audio is still read.
@@ -305,6 +309,13 @@ def plan(env: dict[str, Path], records_dir: Path, now: float) -> Plan:
             for transcript in transcripts:
                 delete("transcript", "retention", str(transcript.relative_to(env["transcripts_dir"])), [transcript],
                        c["end"])
+    # Transcripts and failure markers whose conversation the database no longer has. Never
+    # with an empty database: every transcript would look like no conversation's.
+    transcripts_dir = env["transcripts_dir"]
+    found = sorted(transcripts_dir.glob("*.json")) + sorted((transcripts_dir / "failed").glob("*.json"))
+    for path in found if live else []:
+        if path.stem not in live:
+            delete("transcript", "no conversation", str(path.relative_to(transcripts_dir)), [path], None)
     return Plan(cutoff, list(deletions.values()), cuts, kept)
 
 
@@ -370,11 +381,13 @@ def summary(plan: Plan) -> dict[str, str]:
     def described(found: list[Deletion]) -> str:
         if not found:
             return "none"
-        return (f"{len(found)}, {sum(d.size for d in found) / 1e6:.1f} MB, ending {iso(min(d.end for d in found))}"
-                f" to {iso(max(d.end for d in found))}")
+        ends = [d.end for d in found if d.end is not None]
+        return f"{len(found)}, {sum(d.size for d in found) / 1e6:.1f} MB" + (
+            f", ending {iso(min(ends))} to {iso(max(ends))}" if ends else "")
 
     out = {"retention line": iso(plan.cutoff)}
-    for why, kinds in (("thrown out", ("upload", "import")), ("retention", ("upload", "import", "wav", "transcript"))):
+    for why, kinds in (("thrown out", ("upload", "import")), ("retention", ("upload", "import", "wav", "transcript")),
+                       ("no conversation", ("transcript",))):
         for kind in kinds:
             label = {"upload": "raw uploads", "import": "imports", "wav": "conversation WAVs",
                      "transcript": "transcript files"}[kind]

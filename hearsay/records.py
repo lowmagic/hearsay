@@ -153,7 +153,8 @@ def read_seal(records_dir: Path | None) -> dict:
 
 def deleted(records_dir: Path | None) -> list[dict]:
     """What retention deleted (hearsay/retention.py), as logged: kind (upload, import, wav,
-    transcript), name, why (thrown out, retention), end (unix seconds its audio ends), deleted_at."""
+    transcript), name, why (thrown out, retention, no conversation), end (unix seconds its
+    audio ends; null for a transcript of no conversation, which raw never rebuilds), deleted_at."""
     return lines(records_dir / "deleted.jsonl") if records_dir else []
 
 
@@ -292,7 +293,7 @@ def seal(db_path: Path, records_dir: Path, transcripts_dir: Path, labels_dir: Pa
 
 
 def retain() -> float:
-    """RETAIN: how long audio is kept after its conversation ends."""
+    """RETAIN: how long audio is kept after it ends (hearsay/retention.py)."""
     from hearsay.retention import RETAIN  # imported here: hearsay.retention builds on this module
     return RETAIN
 
@@ -319,8 +320,8 @@ def refusal(sealed: dict[Path, dict], before: float, now: float) -> str | None:
     after it, and so does any conversation unsealing would redo from raw."""
     cutoff = now - retain()
     if before < cutoff:
-        return (f"{iso(before)} is before {iso(cutoff)}: audio is deleted {retain() / 86400:.0f} days after its"
-                " conversation ends (hearsay/retention.py), so the seal line can't move back that far")
+        return (f"{iso(before)} is before {iso(cutoff)}: audio is deleted {retain() / 86400:.0f} days after it"
+                " ends (hearsay/retention.py), so the seal line can't move back that far")
     _, gone = unsealing(sealed, before)
     early = sorted((sealed[path] for path in gone if sealed[path]["start"] < cutoff), key=lambda c: c["start"])
     if early:
@@ -422,8 +423,8 @@ def raw_whole_from(records_dir: Path) -> float:
     (hearsay/retention.py). 0 if it has touched none."""
     line = read_seal(records_dir)["line"]
     records = [json.loads(path.read_text()) for path in (records_dir / "conversations").glob("*.json")]
-    ends = [e["end"] for e in deleted(records_dir)] + [r["conversation"]["end"] for r in records
-                                                       if r.get("discarded")]
+    ends = [e["end"] for e in deleted(records_dir) if e["end"] is not None] + [
+        r["conversation"]["end"] for r in records if r.get("discarded")]
     if not ends:
         return 0.0
     return min((r["conversation"]["end"] for r in records if max(ends) <= r["conversation"]["end"] <= line),

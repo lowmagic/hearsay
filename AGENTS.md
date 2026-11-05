@@ -32,9 +32,10 @@ change to the stream's format or meaning updates it in the same change.
   Omi webhook receiver and its Cloudflare tunnel were retired in 2026-10)
   and never goes to third-party services or downstream consumers.
   A work machine is never used for capture and never holds audio.
-- Audio, the owner's and everyone else's, is deleted 60 days after its
-  conversation ends: raw uploads, imports, WAVs, decoded audio and
-  transcripts. Raw audio covering the owner's enrollment windows is kept for
+- Audio, the owner's and everyone else's, is deleted 60 days on: raw
+  uploads and imports 60 days after their own audio ends, a conversation's
+  WAV and transcripts 60 days after the conversation ends, decoded audio once
+  it's sealed. Raw audio covering the owner's enrollment windows is kept for
   good, so the owner can be enrolled in a new speaker model.
 - Speaker embeddings are retained indefinitely; tagging and merging must be
   retroactive.
