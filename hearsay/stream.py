@@ -230,6 +230,8 @@ def write_stream(db_path: Path, stream_dir: Path, now: float | None = None) -> d
     for conversation_id in found:
         found[conversation_id] = [u for u in found[conversation_id] if not overlaps(
             gone, datetime.fromisoformat(u["start"]).timestamp(), datetime.fromisoformat(u["end"]).timestamp())]
+    # One with every utterance thrown out has none: not transcribed, and no file.
+    found = {c: kept for c, kept in found.items() if kept}
 
     conversation_dir = stream_dir / "conversations"
     conversation_dir.mkdir(parents=True, exist_ok=True)

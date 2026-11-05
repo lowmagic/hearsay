@@ -52,15 +52,23 @@ final class MovementTests: XCTestCase {
         XCTAssertEqual(effects, [.record(.uncertain, confidence: 0.2, reason: .started, anchor: nil), .requestFix(precise: true)])
     }
 
-    func testTwoAgreeingFixesSettleAndFixesStop() {
+    func testAFixThatNeverComesIsAskedForAgain() {
+        var s = Session()
+        _ = s.movement.recording(true, at: 0)  // no signal: the fix it asks for never comes
+        s.run(until: 300)
+        XCTAssertEqual(s.take(), [.requestFix(precise: true)])
+    }
+
+    func testTwoAgreeingFixesSettleAndFixesStop() throws {
         var s = Session.settledAtHome()
         XCTAssertTrue(s.effects.contains { if case .watch = $0 { true } else { false } })
         XCTAssertEqual(s.recorded.last?.1, .settled)
+        let anchor = try XCTUnwrap(s.movement.anchor)
         _ = s.take()
         s.run(until: 130 + 1200)
-        XCTAssertEqual(s.asked, 0)  // settled: no more fixes for a while
-        XCTAssertEqual(s.recorded.count, 4)  // a heartbeat every 5 minutes, for places
-        XCTAssertTrue(s.recorded.allSatisfy { $0 == (.stationary, .heartbeat) })
+        // No more fixes for a while, and a heartbeat every 5 minutes saying where: during a long
+        // stay, the server's only readings of where audio was recorded.
+        XCTAssertEqual(s.take(), Array(repeating: .record(.stationary, confidence: 0.9, reason: .heartbeat, anchor: anchor), count: 4))
         s.run(until: 130 + 1800)
         XCTAssertTrue(s.take().contains(.requestFix(precise: false)))  // a cheap check now and then
     }
@@ -105,6 +113,27 @@ final class MovementTests: XCTestCase {
         XCTAssertEqual(effects, [.unwatch, .record(.walking, confidence: 0.9, reason: .departed, anchor: nil)])
     }
 
+    func testWalkingAwayOnAPoorFixWaitsForASecond() {
+        var s = Session.settledAtHome()
+        _ = s.take()
+        _ = s.movement.activity(.walking, .high, at: 200)
+        s.run(until: 260)
+        _ = s.take()
+        XCTAssertEqual(s.movement.fix(fix(270, 400, accuracy: 150)), [])  // could be a fix gone astray
+        s.run(until: 330)
+        XCTAssertEqual(s.take(), [.requestFix(precise: true)])
+        let effects = s.movement.fix(fix(335, 500, accuracy: 150))
+        XCTAssertEqual(effects, [.unwatch, .record(.walking, confidence: 0.9, reason: .departed, anchor: nil)])
+    }
+
+    func testLeavingTheGeofenceDepartsOnOneGoodFix() {
+        var s = Session.settledAtHome()
+        _ = s.take()
+        XCTAssertEqual(s.movement.leftAnchor(at: 200), [.requestFix(precise: true)])
+        let effects = s.movement.fix(fix(210, 300))  // before Core Motion notices
+        XCTAssertEqual(effects, [.unwatch, .record(.uncertain, confidence: 0.2, reason: .departed, anchor: nil)])
+    }
+
     func testWalkingAroundAtHomeChecksLessAndLessOften() {
         var s = Session.settledAtHome()
         _ = s.take()
@@ -121,37 +150,44 @@ final class MovementTests: XCTestCase {
         XCTAssertEqual(s.movement.state, .stationary)
     }
 
-    /// A party or a yoga class: walking all along, fixes every 5 minutes, going nowhere.
-    func testWalkingAboutOneSpotSettlesOnceFixesAgreeForTenMinutes() {
-        var s = Session()
-        _ = s.movement.recording(true, at: 0)
-        _ = s.movement.fix(fix(5, 0))
-        var offsets = [25.0, -15.0]
-        while s.movement.state != .stationary && s.now < 1200 {
-            _ = s.movement.activity(.walking, .high, at: s.now)
-            s.run(until: s.now + 60)
-            if s.take().contains(.requestFix(precise: true)), !offsets.isEmpty {
-                _ = s.movement.fix(fix(s.now + 5, offsets.removeFirst()))
+    /// A party or a yoga class: walking all along, fixes every 5 minutes, going nowhere. Only precise
+    /// fixes say so: vague ones agree even after walking a good way.
+    func testWalkingAboutOneSpotSettlesOncePreciseFixesAgreeForTenMinutes() {
+        for (accuracy, expected) in [(20.0, Movement.State.stationary), (120.0, .walking)] {
+            var s = Session()
+            _ = s.movement.recording(true, at: 0)
+            _ = s.movement.fix(fix(5, 0, accuracy: accuracy))
+            var offsets = [25.0, -15.0]
+            while !offsets.isEmpty && s.now < 1200 {
+                _ = s.movement.activity(.walking, .high, at: s.now)
+                s.run(until: s.now + 60)
+                if s.take().contains(.requestFix(precise: true)) {
+                    _ = s.movement.fix(fix(s.now + 5, offsets.removeFirst(), accuracy: accuracy))
+                }
             }
+            XCTAssertLessThan(s.now, 700)  // the third fix, 10 minutes after the first
+            XCTAssertEqual(s.movement.state, expected, "accuracy \(accuracy)")
         }
-        XCTAssertEqual(s.movement.state, .stationary)
-        XCTAssertLessThan(s.now, 700)  // the third fix, 10 minutes after the first
     }
 
-    func testWalkingSomewhereDoesNotSettle() {
-        var s = Session()
-        _ = s.movement.recording(true, at: 0)
-        _ = s.movement.fix(fix(5, 0))
-        var along = 0.0
-        while s.now < 1800 {
-            _ = s.movement.activity(.walking, .high, at: s.now)
-            s.run(until: s.now + 60)
-            if s.take().contains(.requestFix(precise: true)) {
-                along += 400
-                _ = s.movement.fix(fix(s.now + 5, along))
+    /// Fixes every 5 minutes on the way somewhere: walking, or crawling through a jam with each fix
+    /// near the last.
+    func testGoingSomewhereNeverSettles() {
+        for (activity, step, moving) in [(Movement.Activity.walking, 400.0, Movement.State.walking), (.automotive, 20, .driving)] {
+            var s = Session()
+            _ = s.movement.recording(true, at: 0)
+            _ = s.movement.fix(fix(5, 0))
+            var along = 0.0
+            while s.now < 1800 {
+                _ = s.movement.activity(activity, .high, at: s.now)
+                s.run(until: s.now + 60)
+                if s.take().contains(.requestFix(precise: true)) {
+                    along += step
+                    _ = s.movement.fix(fix(s.now + 5, along))
+                    XCTAssertEqual(s.movement.state, moving, "\(activity), \(along) m along")
+                }
             }
         }
-        XCTAssertEqual(s.movement.state, .walking)
     }
 
     func testARedLightOrAQueueDoesNotSettle() {

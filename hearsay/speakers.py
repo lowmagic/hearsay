@@ -156,7 +156,9 @@ def owner_voice(model, raw_dir: Path, bursts: list, labels_dir: Path, db: sqlite
         return None
     sealed = {}
     for start, end, coverage, vector in db.execute("SELECT start, end, coverage, vector FROM sealed_enrollment"):
-        sealed.setdefault((start, end), (coverage, []))[1].append(list(array("f", vector)))
+        found = sealed.setdefault((start, end), (coverage, []))[1]
+        if vector is not None:  # NULL for a window sealed without a usable piece
+            found.append(list(array("f", vector)))
     vectors = []
     for window in json.loads(path.read_text()):
         start, end = timestamp(window["start"]), timestamp(window["end"])

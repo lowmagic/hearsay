@@ -273,8 +273,8 @@ struct Movement {
             default: break
             }
         }
-        // Connected to the car and not plainly on foot: probably in it.
-        if car, !(activity.kind == .walking && activity.confidence >= .medium) { return (.driving, 0.4) }
+        // Connected to the car and not plainly walking or cycling (above): probably in it.
+        if car { return (.driving, 0.4) }
         return (.uncertain, 0.2)
     }
 
