@@ -94,11 +94,15 @@ def test_a_song_s_words_leave_the_stream_unless_the_operator_says_otherwise(tmp_
     db = sqlite3.connect(db_path)
     db.executemany("INSERT INTO turn_music VALUES (?, ?, 0, ?)", [
         ("c1:0000", 0.25, 0.6),  # talked over loud music: too much speech to be the song
+        ("c1:0001", 0.22, 0.6),  # just enough speech to be talk
         ("c1:0002", 0.1, 0.6),   # the song
         ("c1:0003", 0.1, 0.6),   # scores as the song, but the operator heard talk
         ("c1:0004", 0.25, 0.1),  # scores as talk, but the operator heard the song
         ("c1:0005", 0.1, 0.6),   # scores as the song, but tagged someone present
+        ("c1:0007", 0.1, 0.6),   # scores as the song, but too short to judge
+        ("c1:0008", 0.1, 0.1),   # little speech, but little music: quiet talk
     ])
+    db.execute("UPDATE turns SET end = start + 0.6 WHERE turn_id = 'c1:0007'")
     db.executemany("INSERT INTO operator_input VALUES (?, 'music', ?)", [("c1:0003", "talk"), ("c1:0004", "song")])
     db.commit()
     db.close()
@@ -115,14 +119,19 @@ def test_turns_that_sound_like_tagged_media_leave_the_stream_unless_tagged(tmp_p
         ("c1:0000", 0.95),  # the owner's by voice: never media
         ("c1:0001", 0.95),  # the TV
         ("c1:0002", 0.85),  # below the hint
+        ("c1:0003", 0.9),   # at the hint
         ("c1:0005", 0.95),  # sounds like the TV, but tagged someone present
+        ("c1:0007", 0.95),  # the owner's by channel: never media
+        ("c1:0008", 0.95),  # the owner's only by diarization, which can't vouch for it
     ])
+    db.execute("UPDATE turn_speakers SET label = 'owner', basis = 'channel' WHERE turn_id = 'c1:0007'")
+    db.execute("UPDATE turn_speakers SET label = 'owner' WHERE turn_id = 'c1:0008'")
     db.commit()
     db.close()
     write_stream(db_path, stream_dir)
     _, utterances = read(stream_dir)
     assert [u["text"] for u in utterances] == [
-        "mine", "first anon", "second anon", "first anon again", "a cashier", "too short to tell", "yeah (inherited)"]
+        "mine", "first anon", "first anon again", "a cashier", "too short to tell"]
 
 
 def test_turns_the_operator_says_are_theirs_are_the_owners(tmp_path):
@@ -201,6 +210,20 @@ def test_a_stretch_thrown_out_takes_every_utterance_it_touches(tmp_path):
         "mine", "walter's", "first anon", "a cashier", "too short to tell", "yeah (inherited)"]
 
 
+def test_a_conversation_whose_every_utterance_was_thrown_out_has_none(tmp_path):
+    db_path, stream_dir = build(tmp_path), tmp_path / "stream"
+    stream_dir.mkdir()
+    # Every turn of c1 (0 to 85 s), but not all of c1 (0 to 100 s): its index entry stays.
+    (stream_dir / "forgotten.json").write_text(json.dumps([{
+        "forgotten_at": "2026-10-01T12:00:00.000Z", "start": iso(T), "end": iso(T + 90),
+        "conversation_id": "c1", "utterance_ids": [f"c1:{i:04d}" for i in range(9)], "reason": None}]))
+    assert write_stream(db_path, stream_dir)["transcribed"] == 0
+    index = json.loads((stream_dir / "index.json").read_text())["conversations"]
+    assert {k: index[0][k] for k in ("conversation_id", "transcribed", "utterances", "revision", "file")} == {
+        "conversation_id": "c1", "transcribed": False, "utterances": 0, "revision": None, "file": None}
+    assert list((stream_dir / "conversations").iterdir()) == []
+
+
 def test_revisions_change_only_when_a_conversation_does(tmp_path):
     db_path, stream_dir = build(tmp_path), tmp_path / "stream"
     write_stream(db_path, stream_dir)
@@ -208,8 +231,11 @@ def test_revisions_change_only_when_a_conversation_does(tmp_path):
     index, utterances = read(stream_dir)
     first, transcript = index[0]["revision"], index[0]["transcript_revision"]
     ids = [u["utterance_id"] for u in utterances]
+    files = [stream_dir / "index.json", stream_dir / "conversations/c1.jsonl"]
+    written = [(f.stat().st_ino, f.stat().st_mtime_ns) for f in files]
     write_stream(db_path, stream_dir)
     assert read(stream_dir)[0][0]["revision"] == first
+    assert [(f.stat().st_ino, f.stat().st_mtime_ns) for f in files] == written  # not rewritten
 
     # The operator's correction applies to past turns, so the conversation's
     # revision changes, but the transcript and so the utterance ids don't.
@@ -224,10 +250,15 @@ def test_revisions_change_only_when_a_conversation_does(tmp_path):
     assert utterances[2]["speaker"] == {"kind": "owner", "name": None, "label": None}
 
     # Re-transcription: the same ids now name different speech.
-    db.execute("UPDATE turns SET end = end + 2, text = 'mine, longer' WHERE idx = 0")
+    db.execute("UPDATE turns SET text = 'mine, reworded' WHERE idx = 0")
     db.commit()
     write_stream(db_path, stream_dir)
-    assert read(stream_dir)[0][0]["transcript_revision"] != transcript
+    reworded = read(stream_dir)[0][0]["transcript_revision"]
+    assert reworded != transcript
+    db.execute("UPDATE turns SET end = end + 2 WHERE idx = 0")
+    db.commit()
+    write_stream(db_path, stream_dir)
+    assert read(stream_dir)[0][0]["transcript_revision"] not in (transcript, reworded)
 
     # A conversation that no longer exists loses its file.
     db.execute("DELETE FROM conversations WHERE conversation_id = 'c1'")

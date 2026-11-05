@@ -159,7 +159,8 @@ restructured, not deleted. Match by time, `start` to `end`: the ids are renumber
 
 Everything in a listed stretch stays out of the stream for good: every utterance that overlaps it at all, the taps
 inside it, and a conversation that lies wholly inside it, whose index entry goes too. A conversation only partly
-thrown out keeps its index entry, with its places. Delete what you hold from a stretch; don't wait for its
+thrown out keeps its index entry, with its places; if none of its utterances are left, it has none, as if not yet
+transcribed (`transcribed` false, no file). Delete what you hold from a stretch; don't wait for its
 conversation's revision to change.
 
 Throwing out is the operator's input, applied on every reprocess, so a re-run from raw never brings it back into the
