@@ -313,8 +313,9 @@ Decided 2026-11-05, with the operator:
   Owner-threshold labels show room (100 labels: owner at 0.30 keeps
   precision 1.00 and lifts recall from 0.78 to 0.90), with only 8 labels
   between 0.30 and 0.40 so far.
-- Open: words cut from a record for a stretch thrown out after sealing
-  stay in the records' and database's snapshots up to 2 months.
+- Words cut from a record for a stretch thrown out after sealing stay in
+  the records' and database's snapshots up to 2 months: accepted by the
+  operator, since the audio is what mustn't outlive its window.
 
 Discarding and retention, built 2026-11-05 (`hearsay/retention.py`), run
 at the end of every reprocess, after sealing. A word cut from a record is
