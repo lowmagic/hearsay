@@ -304,6 +304,12 @@ def ranged(data: bytes, range_header: str | None) -> Response:
     return Response(data[start : end + 1], status_code=206, media_type="audio/wav", headers=headers)
 
 
+async def read_form(request: Request, keep_blank_values: bool = False) -> dict[str, list[str]]:
+    """A posted form's fields. Bytes that aren't UTF-8 are replaced, as parse_qs
+    does for escaped ones: bad input, not an error."""
+    return parse_qs((await request.body()).decode(errors="replace"), keep_blank_values=keep_blank_values)
+
+
 # One tap each. hearsay/stream.py keeps _me (the owner), _stranger (someone
 # else present) and _mic (someone present, amplified), and leaves the rest out:
 # not speech from anyone there. _mic is kept apart from _stranger because a PA
@@ -415,7 +421,12 @@ def coordinates(text: str) -> tuple[float, float] | None:
     if not found:
         return None
     lat, lon = float(found[1]), float(found[2])
-    return (lat, lon) if abs(lat) <= 90 and abs(lon) <= 180 else None
+    return (lat, lon) if on_earth(lat, lon) else None
+
+
+def on_earth(lat: float, lon: float) -> bool:
+    # False for NaN too, which compares false with everything.
+    return abs(lat) <= 90 and abs(lon) <= 180
 
 
 def heard_at_spot(spot_times: list[float], times: list[float], turns: list[tuple]) -> list[tuple]:
@@ -450,11 +461,12 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Pat
         # The iPhone app's own screens (GET /places.json) send the capture token on each request.
         sent = request.headers.get("authorization", "")
         if app_token and sent.startswith("Bearer "):
-            return hmac.compare_digest(sent.removeprefix("Bearer ").encode(), app_token.encode())
+            return hmac.compare_digest(sent.encode(), f"Bearer {app_token}".encode())
         expires, _, signature = request.cookies.get(COOKIE, "").partition(".")
-        if not expires.isdigit() or int(expires) < time.time():
+        # Bytes: a cookie can hold any character, and one that isn't ASCII is just not a session.
+        if not (expires.isascii() and expires.isdigit()) or int(expires) < time.time():
             return False
-        return hmac.compare_digest(signature, sign(int(expires)))
+        return hmac.compare_digest(signature.encode(), sign(int(expires)).encode())
 
     def connect() -> sqlite3.Connection:
         return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -520,7 +532,7 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Pat
 
     @app.post("/login")
     async def login(request: Request) -> Response:
-        form = parse_qs((await request.body()).decode())
+        form = await read_form(request)
         given_user = form.get("username", [""])[0]
         given_password = form.get("password", [""])[0]
         user_ok = hmac.compare_digest(given_user.encode(), user.encode())
@@ -532,8 +544,9 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Pat
 
     @app.post("/login/app")
     async def app_login(request: Request) -> Response:
-        sent = request.headers.get("authorization", "").removeprefix("Bearer ")
-        if not app_token or not hmac.compare_digest(sent.encode(), app_token.encode()):
+        # The whole header, so a token sent without its scheme isn't one.
+        sent = request.headers.get("authorization", "")
+        if not app_token or not hmac.compare_digest(sent.encode(), f"Bearer {app_token}".encode()):
             await asyncio.sleep(1)
             return Response(status_code=401)
         return session()
@@ -603,7 +616,7 @@ Tag each; it applies at the next reprocess.</p>
         script = request.headers.get("x-requested-with") == "fetch"
         if not logged_in(request):
             return Response(status_code=401) if script else RedirectResponse("/login", status_code=303)
-        form = parse_qs((await request.body()).decode())
+        form = await read_form(request)
         turn_id = form.get("turn_id", [""])[0]
         category = "" if undo else form.get("category", [""])[0]
         turn = find_turn(turn_id)
@@ -810,10 +823,11 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
             return RedirectResponse("/login", status_code=303)
         try:
             date = datetime.fromisoformat(day).date() if day else datetime.now().astimezone().date()
-        except ValueError:
+            # Near the first and last days datetime can hold, a day's edges fall outside it.
+            first, last = (datetime.combine(d, datetime.min.time()).astimezone().timestamp()
+                           for d in (date, date + timedelta(days=1)))
+        except (ValueError, OverflowError):
             return Response(status_code=404)
-        first, last = (datetime.combine(d, datetime.min.time()).astimezone().timestamp()
-                       for d in (date, date + timedelta(days=1)))
         db = connect()
         try:
             conversations = db.execute(
@@ -860,7 +874,7 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
         turns left unchecked between them are kept."""
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
-        form = parse_qs((await request.body()).decode())
+        form = await read_form(request)
         conversation_id = form.get("conversation_id", [""])[0]
         action = form.get("action", [""])[0]
         reason = " ".join(form.get("reason", [""])[0].split())[:REASON_CHARACTERS]
@@ -900,7 +914,7 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
         """Let a conversation that has ended reach the stream before its two weeks are up."""
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
-        form = parse_qs((await request.body()).decode())
+        form = await read_form(request)
         conversation_id = form.get("conversation_id", [""])[0]
         db = connect()
         try:
@@ -917,9 +931,13 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
         """Take a mark back, unless a reprocess has applied it: then it's final."""
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
-        form = parse_qs((await request.body()).decode())
+        form = await read_form(request)
         at = form.get("at", [""])[0].split("|")
-        if len(at) == 2 and not applied(at):
+        try:
+            final = applied(at)
+        except ValueError:  # not two times, so no mark of the page's: write nothing
+            return go_back(form)
+        if not final:
             append_tag({"type": "undo", "at": at}, labels_dir / "forget.jsonl")
         return go_back(form)
 
@@ -1058,7 +1076,7 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
     async def tag_place(request: Request) -> Response:
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
-        form = parse_qs((await request.body()).decode())
+        form = await read_form(request)
 
         def field(key: str) -> str:
             return " ".join(form.get(key, [""])[0].split())
@@ -1067,29 +1085,46 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
         places_path = labels_dir / "places.jsonl"
         def radius(text: str, default: float = RADIUS) -> float:
             try:
-                return min(max(float(text), MIN_RADIUS), MAX_RADIUS)
+                r = float(text)
             except ValueError:
                 return default
+            # NaN would pass the bounds, and infinity isn't an area anyone set.
+            return min(max(r, MIN_RADIUS), MAX_RADIUS) if math.isfinite(r) else default
 
         def place(name: str, lat: float, lon: float, r: float) -> dict:
             # Only a radius the operator set is written, so the default can still change.
             return {"type": "place", "name": name, "latitude": lat, "longitude": lon,
                     **({"radius": r} if r != RADIUS else {})}
 
-        if action == "name" and name:
-            append_tag(place(name, float(field("latitude")), float(field("longitude")), radius(field("radius"))),
-                       places_path)
+        def point() -> tuple[float, float] | None:
+            """The form's latitude and longitude, or None if they aren't a point on earth."""
+            try:
+                lat, lon = float(field("latitude")), float(field("longitude"))
+            except ValueError:
+                return None
+            return (lat, lon) if on_earth(lat, lon) else None
+
+        def span() -> tuple[float, float] | None:
+            """The form's start and end, or None if they aren't times."""
+            try:
+                start, end = float(field("start")), float(field("end"))
+            except ValueError:
+                return None
+            return (start, end) if math.isfinite(start) and math.isfinite(end) else None
+
+        here, times = point(), span()
+        if action == "name" and name and here:
+            append_tag(place(name, *here, radius(field("radius"))), places_path)
         elif action == "rename" and name and field("from") and name != field("from"):
             append_tag({"type": "rename", "from": field("from"), "to": name}, places_path)
-        elif action in ("ignore", "unignore"):
-            # The coordinates as the page showed them, so "Offer again" matches exactly.
-            append_tag({"type": action, "latitude": float(field("latitude")),
-                        "longitude": float(field("longitude"))}, places_path)
+        elif action in ("ignore", "unignore") and here:
+            # As posted: the app sends a spot's centre in full, the page to 6 decimals (hearsay.places.read_ignored).
+            append_tag({"type": action, "latitude": here[0], "longitude": here[1]}, places_path)
         elif action == "forget" and field("from"):
             append_tag({"type": "forget", "name": field("from")}, places_path)
-        elif action in ("drop", "at") and field("start") and field("end") and (action == "drop" or name):
+        elif action in ("drop", "at") and times and (action == "drop" or name):
             # A span of readings that was wrong, or was really at a named place (hearsay/places.py).
-            append_tag({"type": action, "start": float(field("start")), "end": float(field("end"))}
+            append_tag({"type": action, "start": times[0], "end": times[1]}
                        | ({"name": name} if action == "at" else {}), places_path)
         elif action == "move" and field("from"):
             # Its spots, where the phone's readings put them, give way to the points given:
@@ -1177,7 +1212,7 @@ as a draft until you press Update.</p>
     async def edit_words(request: Request) -> Response:
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
-        form = parse_qs((await request.body()).decode(), keep_blank_values=True)
+        form = await read_form(request, keep_blank_values=True)
         action = form.get("action", [""])[0]
         if action == "save":
             save_draft(labels_dir, tidy(form.get("words", [""])[0].splitlines()))

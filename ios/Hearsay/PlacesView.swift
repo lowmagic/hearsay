@@ -15,7 +15,8 @@ struct PlacesView: View {
 
     struct Unnamed: Identifiable {
         let id: Int
-        // As the portal listed them: ignoring a spot matches them exactly.
+        // As the portal listed them, sent back in full to ignore the spot; the portal
+        // matches it to 6 decimals, as its web page shows it (hearsay/places.py).
         let latitude: Double
         let longitude: Double
         let minutes: Int
