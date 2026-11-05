@@ -262,7 +262,7 @@ def test_speech_landing_less_than_a_gap_after_the_line_joins_the_sealed_conversa
     (d["imports"] / "later.m4a.json").write_text(json.dumps(
         {"file": "later.m4a", "start": datetime.fromtimestamp(landed, timezone.utc).isoformat()}))
     assert late(first, d["records"], d["imports"], d["labels"]) == landed
-    unseal(d["records"], landed)
+    assert unseal(d["records"], landed)["unsealed"] == 1
 
     # c1's 30 s of speech, then the recording's minute: from raw, one conversation.
     speech = [(T0 + 1, T0 + 16), (T0 + 44, T0 + 59), (landed, landed + 60)]
@@ -276,6 +276,15 @@ def test_speech_landing_less_than_a_gap_after_the_line_joins_the_sealed_conversa
         return rows(db_path, "SELECT start, end, speech_seconds FROM conversations")
 
     assert found(d["records"]) == found(None) == [(T0, landed + 61, 90.0)]
+
+    # The next run finds nothing late, nor does one after the line passes the recording again.
+    assert late(first, d["records"], d["imports"], d["labels"]) is None
+    db = sqlite3.connect(first)
+    db.execute("INSERT INTO imported_audio VALUES ('later.m4a', ?, 60, 'sha-later', 'later.pcm')", (landed,))
+    db.commit()
+    db.close()
+    seal(first, d["records"], d["transcripts"], d["labels"], now=NOW)
+    assert late(first, d["records"], d["imports"], d["labels"]) is None
 
 
 @pytest.mark.parametrize("now, opened, sealed", [
