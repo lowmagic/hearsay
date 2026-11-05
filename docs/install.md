@@ -25,14 +25,16 @@ kinds to those workers and check they're running.
    git clone https://github.com/junglestyle/hearsay.git /mnt/fast/repos/hearsay
    sudo /mnt/fast/repos/hearsay/install/nas.sh
    ```
-   This creates the datasets under `fast/hearsay` (the NVMe pool) and the
-   secrets, builds the images, starts the portal on the LAN
+   This creates the datasets under `fast/hearsay` (the NVMe pool) and their
+   backups, the secrets, builds the images, starts the portal on the LAN
    and tailnet and the capture receiver on the tailnet, checks that every
    captured payload reprocesses, reprocesses once, and waits for a real
    upload from the phone or Mac (on a new install it stops there; re-run it
    after step 4). The NAS must already be on your tailnet (the Tailscale
    app in the TrueNAS UI). Before you run it, the Apps pool must be set in
-   the TrueNAS UI. The script checks this and tells you if it isn't.
+   the TrueNAS UI, and the NAS-wide backups must exist there (Data
+   Protection): a recursive periodic snapshot task and a replication task
+   for `fast`. The script checks both and tells you if they aren't.
 3. **Dev box with the GPU, as your user:** [`install/gpu.sh`](../install/gpu.sh)
    sets up transcription (Parakeet, pyannote) as a kind on the dev box's
    corral worker, which pulls new WAVs from the NAS over `ssh nas` and writes
@@ -70,6 +72,23 @@ still parsed:
 - `.body` holds the request body, byte for byte.
 - `.json` is the sidecar: timestamp, query params, headers without the
   token, size, and sha256.
+
+Each directory under `/mnt/fast/hearsay/` is a dataset of its own, backed up
+by what it holds ([`install/nas.sh`](../install/nas.sh) sets this up):
+
+- Audio, and what's made from it alone: `raw`, `imports`, `audio`
+  (conversation WAVs), `pcm` (decoded audio, a cache) and `transcripts`
+  (the dev box's, which records hold once sealed). Daily snapshots at 04:00
+  kept 7 days, replicated to `storage/hearsay-audio-replica` and kept there
+  as long. Input audio isn't precious: what it gave is kept in records, and
+  the audio itself goes at retention, so its backups don't keep it long
+  after.
+- What's kept: `records`, `db`, `labels`, `stream` and `config`. The
+  NAS-wide backups: `fast` snapshotted daily and kept 2 weeks, replicated to
+  `storage/fast-replica` and kept 2 months. These aren't Hearsay's; `nas.sh`
+  only adds the audio datasets to their excludes.
+
+The TrueNAS UI shows both under Data Protection.
 
 ## Recording from the pendant (iPhone)
 
@@ -218,6 +237,9 @@ sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay
   audio changes, and the new one is moved in (from `audio/.staged/`) only
   once the database describing it is in place, so a failed run leaves the
   old audio too.
+- `/mnt/fast/hearsay/pcm/`: uploads and imports decoded to PCM, cached so
+  each is decoded once, and only while its conversation isn't sealed.
+  Deleting it is safe: the next run decodes them again.
 
 - Speaker embeddings and owner / not-owner labels per segment, in the
   `segment_speakers` table.

@@ -15,6 +15,7 @@ NAS_TRANSCRIPTS="$NAS_ROOT/transcripts"
 NAS_IMPORTS="$NAS_ROOT/imports"
 NAS_STREAM="$NAS_ROOT/stream"
 NAS_RECORDS="$NAS_ROOT/records"
+NAS_PCM="$NAS_ROOT/pcm"
 # Idea Machine's, not Hearsay's: it writes vocab.json there for the portal's
 # Words page. Hearsay never creates it (install/compose.vocab.yaml).
 IDEAMACHINE_VOCAB_DIR="/mnt/fast/ideamachine/vocab"

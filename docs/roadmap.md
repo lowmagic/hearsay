@@ -332,6 +332,18 @@ Built in order, each usable on its own: the boundary; discarding thrown-out
 audio and cutting it from records; retention with its guards; the datasets
 and snapshots (`install/nas.sh`).
 
+The datasets and snapshots, built 2026-11-05: decoded audio moved from `db`
+to its own dataset, `pcm`. `raw`, `audio`, `imports`, `pcm` and
+`transcripts` have their own snapshot tasks (daily, 7 days, schema
+`hearsay-%Y-%m-%d_%H-%M`) and a replication to
+`storage/hearsay-audio-replica` kept as long, and are excluded from the
+NAS-wide tasks. A task's retention only prunes datasets it covers, so the
+NAS-wide tasks would have kept what they already had of them forever:
+`nas.sh` fixes the local snapshots' removal dates when it adds the excludes,
+then lists those snapshots and the old replica datasets and destroys them
+once the operator confirms. `db`'s snapshots still hold the decoded audio
+cached there before; they age out (2 weeks local, 2 months replicated).
+
 ## 13. Where a conversation happened
 
 The phone app records where the owner is while it captures, and each
