@@ -7,7 +7,7 @@ import wave
 import pytest
 
 from hearsay.assemble import assemble
-from hearsay.imports import load_imports
+from hearsay.imports import load_imports, remove_stale_import_pcm
 from hearsay.parse import rebuild
 from test_assemble import CHUNK, T, add_conversations, audio_burst, seconds
 
@@ -52,7 +52,10 @@ def test_imported_audio_fills_the_gap_and_live_audio_wins_the_overlap(tmp_path):
     with pytest.raises(ValueError):
         load_imports(imports, db_path, cache)
 
-    # Removing the import drops its decoded cache too.
+    # Removing the import drops its decoded cache too, once the database no
+    # longer refers to it.
     (imports / "a.wav.json").unlink()
+    assert remove_stale_import_pcm(cache, db_path) == 0
     load_imports(imports, db_path, cache)
+    assert remove_stale_import_pcm(cache, db_path) == 1
     assert list(cache.iterdir()) == []

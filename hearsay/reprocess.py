@@ -9,7 +9,8 @@ an hourly enqueue (install/nas.sh) catches uploads that couldn't.
 Every run builds a complete new database from raw in a scratch directory
 (a tmpfs in the container), then brings the real one up to date in a single
 transaction that changes only the rows that differ. WAVs that changed are
-staged beside the real ones and moved into place only after that. So the
+staged beside the real ones and moved into place only after that, and WAVs
+and decoded audio it no longer refers to are deleted only then too. So the
 portal and the label tool always read a complete database, a failed run
 leaves the previous database and audio in place, and a run with nothing new
 writes almost nothing to disk (the NAS keeps snapshots, so every rewritten
@@ -39,11 +40,11 @@ from pathlib import Path
 from hearsay import conversations, speakers
 from hearsay.assemble import assemble, promote_wavs, remove_stale_wavs
 from hearsay.cache import Cache
-from hearsay.capture import load_captures
+from hearsay.capture import load_captures, remove_stale_capture_pcm
 from hearsay.conversations import find_conversations
 from hearsay.forget import forget
 from hearsay.hold import record_releases
-from hearsay.imports import load_imports
+from hearsay.imports import load_imports, remove_stale_import_pcm
 from hearsay.media import score_media
 from hearsay.music import score_music
 from hearsay.parse import ParseFailed, rebuild
@@ -64,6 +65,15 @@ def report(title: str, counts: dict) -> None:
 
 DIRS = ("raw_dir", "db", "audio_dir", "labels_dir", "model_dir", "transcripts_dir", "imports_dir", "stream_dir",
         "affect_model_dir", "music_model_dir", "records_dir")
+
+
+# Decoded audio is derived, so it's cached next to the database.
+def imports_pcm(env: dict[str, Path]) -> Path:
+    return env["db"].parent / "imports-pcm"
+
+
+def capture_pcm(env: dict[str, Path]) -> Path:
+    return env["db"].parent / "capture-pcm"
 
 
 @contextmanager
@@ -89,10 +99,10 @@ def build(env: dict[str, Path], staging: Path, staged_audio: Path, records_dir: 
             sealed, imports = sealed_payloads(records_dir)
             report(f"Rebuilt from {env['raw_dir']}:", rebuild(env["raw_dir"], staging, sealed))
         report("Sealed conversations, from their records:", restore(staging, records_dir))
-        # Decoded imports are derived, so they're cached next to the database.
+        # Decoded once and cached; the cache is pruned in run, once this database is in place.
         report(f"Imported audio from {env['imports_dir']}:",
-               load_imports(env["imports_dir"], staging, env["db"].parent / "imports-pcm", imports))
-        report("Audio from the recorder:", load_captures(env["raw_dir"], staging, env["db"].parent / "capture-pcm"))
+               load_imports(env["imports_dir"], staging, imports_pcm(env), imports))
+        report("Audio from the recorder:", load_captures(env["raw_dir"], staging, capture_pcm(env)))
         report("Conversations found in the audio stream:", find_conversations(env["raw_dir"], staging, cache))
         report("Where conversations happened:", find_places(staging, env["labels_dir"]))
         report(f"Assembled conversation audio in {staged_audio}:",
@@ -129,6 +139,8 @@ def run(env: dict[str, Path]) -> None:
         # From the database now in place, so the stream always matches it.
         report(f"Utterance stream in {env['stream_dir']}:", write_stream(env["db"], env["stream_dir"]))
         print(f"Removed {remove_stale_wavs(env['audio_dir'], env['db'])} stale WAV(s).")
+        print(f"Removed {remove_stale_import_pcm(imports_pcm(env), env['db'])} stale decoded import(s) and "
+              f"{remove_stale_capture_pcm(capture_pcm(env), env['db'])} stale decoded capture run(s).")
         report(f"Sealed in {env['records_dir']}:",
                seal(env["db"], env["records_dir"], env["transcripts_dir"], env["labels_dir"]))
 

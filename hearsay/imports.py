@@ -59,11 +59,6 @@ def load_imports(imports_dir: Path, db_path: Path, cache_dir: Path, sealed: set[
             decode(source, pcm)
         rows.append((sidecar["file"], timestamp(sidecar["start"]), pcm.stat().st_size / BYTES_PER_SECOND,
                      sha, str(pcm)))
-    # The cache is derived: drop PCM for imports that no longer exist.
-    current = {r[3] for r in rows}
-    for pcm in cache_dir.glob("*.pcm"):
-        if pcm.stem not in current:
-            pcm.unlink()
 
     db = sqlite3.connect(db_path)
     try:
@@ -73,3 +68,20 @@ def load_imports(imports_dir: Path, db_path: Path, cache_dir: Path, sealed: set[
     finally:
         db.close()
     return {"imports": len(rows), "hours": round(sum(r[2] for r in rows) / 3600, 2)}
+
+
+def remove_stale_import_pcm(cache_dir: Path, db_path: Path) -> int:
+    """Delete decoded PCM the database no longer refers to.
+
+    Separate from load_imports: reprocess calls it only after the new
+    database is in place, so the one readers see never points at a deleted file.
+    """
+    db = sqlite3.connect(db_path)
+    try:
+        current = {path for (path,) in db.execute("SELECT pcm_path FROM imported_audio")}
+    finally:
+        db.close()
+    stale = [pcm for pcm in cache_dir.glob("*.pcm") if str(pcm) not in current]
+    for pcm in stale:
+        pcm.unlink()
+    return len(stale)

@@ -43,13 +43,13 @@ def write_atomically(path: Path, data: bytes) -> None:
     os.replace(tmp, path)
 
 
-def authorized(request: Request, kind: str, token: str, secret: str) -> bool:
-    if hmac.compare_digest(token.encode(), secret.encode()):
+def authorized(request: Request, kind: str, sent: str, token: str) -> bool:
+    if hmac.compare_digest(sent.encode(), f"Bearer {token}".encode()):
         return True
     log.warning(
         "rejected %s upload: %s token, client %s",
         kind,
-        "wrong" if token else "no",
+        "wrong" if sent else "no",
         request.client.host if request.client else "unknown",
     )
     return False
@@ -79,11 +79,14 @@ async def store(raw_dir: Path, request: Request, kind: str) -> None:
 
 
 def create_capture_app(raw_dir: Path, token: str, after_upload: Callable[[], None] | None = None) -> FastAPI:
+    # Refused here, so no caller can build a receiver open to anyone.
+    if not token:
+        raise RuntimeError("the capture token is empty")
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.post("/capture")
     async def capture(request: Request, background: BackgroundTasks) -> Response:
-        sent = request.headers.get("authorization", "").removeprefix("Bearer ")
+        sent = request.headers.get("authorization", "")
         if not authorized(request, "capture", sent, token):
             return Response(status_code=401)
         await store(raw_dir, request, "capture")
@@ -96,8 +99,6 @@ def create_capture_app(raw_dir: Path, token: str, after_upload: Callable[[], Non
 
 def capture_app_from_env() -> FastAPI:
     token = os.environ["HEARSAY_CAPTURE_TOKEN"]
-    if not token:
-        raise RuntimeError("HEARSAY_CAPTURE_TOKEN is empty")
     raw_dir = Path(os.environ["HEARSAY_RAW_DIR"])
     corral_url = os.environ.get("CORRAL_URL")
     if not corral_url:

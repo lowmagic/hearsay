@@ -524,11 +524,6 @@ def load_captures(raw_dir: Path, db_path: Path, cache_dir: Path) -> dict:
                              str(pcm)))
         mac_rows += [(start, duration, "mixed", path)
                      for start, duration, path in mix([(r[0], r[1], r[3]) for r in mac_rows], cache_dir)]
-        # The cache is derived: drop PCM for runs that no longer exist.
-        current = {r[4] for r in rows} | {r[3] for r in mac_rows}
-        for pcm in cache_dir.glob("*.pcm"):
-            if str(pcm) not in current:
-                pcm.unlink()
 
         db.executescript(SCHEMA)
         db.executemany("INSERT INTO captured_audio VALUES (?,?,?,?,?)", rows)
@@ -540,3 +535,21 @@ def load_captures(raw_dir: Path, db_path: Path, cache_dir: Path) -> dict:
             "lost_frames": sum(r[3] for r in rows), "stored_runs": len(stored), "stored_unplaced": unplaced,
             "malformed_records": malformed(records),
             "mac_hours": round(sum(r[1] for r in mac_rows if r[2] == "mixed") / 3600, 2)}
+
+
+def remove_stale_capture_pcm(cache_dir: Path, db_path: Path) -> int:
+    """Delete decoded PCM the database no longer refers to.
+
+    Separate from load_captures: reprocess calls it only after the new
+    database is in place, so the one readers see never points at a deleted file.
+    """
+    db = sqlite3.connect(db_path)
+    try:
+        current = {path for (path,) in db.execute(
+            "SELECT pcm_path FROM captured_audio UNION SELECT pcm_path FROM mac_audio")}
+    finally:
+        db.close()
+    stale = [pcm for pcm in cache_dir.glob("*.pcm") if str(pcm) not in current]
+    for pcm in stale:
+        pcm.unlink()
+    return len(stale)
