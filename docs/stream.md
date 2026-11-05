@@ -164,7 +164,8 @@ transcribed (`transcribed` false, no file). Delete what you hold from a stretch;
 conversation's revision to change.
 
 Throwing out is the operator's input, applied on every reprocess, so a re-run from raw never brings it back into the
-stream. Raw payloads and audio of a thrown-out stretch are kept until retention (roadmap slice 12) deletes them.
+stream. Hearsay deletes the stretch's audio and cuts its words from what it keeps once the conversation is sealed, two
+weeks after it ends (the rest of its raw audio goes 60 days after); nothing of that changes the stream.
 
 ## The hold
 
