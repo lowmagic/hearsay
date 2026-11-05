@@ -102,6 +102,34 @@ def test_nothing_is_reachable_or_written_without_logging_in(portal, method, path
     assert files() == before
 
 
+# Each form with a byte that isn't UTF-8 in a field that decides what's written, as no browser sends it.
+@pytest.mark.parametrize("path, body", [
+    ("/login", b"username=me&password=correct horse\xff"),
+    ("/turn", b"turn_id=a0&category=_media\xff"),
+    ("/forget", b"conversation_id=c1&action=whole\xff"),
+    ("/forget/undo", b"conversation_id=c1&at=2026-01-01T00:00:00%2B00:00|2026-01-01T00:00:04\xff"),
+    ("/release", b"conversation_id=c1\xff"),
+    ("/places", b"action=name&name=Back Room&latitude=-26.12\xff&longitude=80.14"),
+    ("/words", b"action=save\xff&words=Xanthe"),
+])
+def test_a_form_that_isnt_utf_8_is_bad_input_and_writes_nothing(portal, path, body):
+    from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
+
+    client, db_path, labels_dir = portal
+    db = sqlite3.connect(db_path)
+    db.executescript(CONVERSATIONS_SCHEMA)
+    db.execute("INSERT INTO conversations VALUES ('c1', 1767225600, 1767225640, 32, 0)")
+    db.commit()
+    db.close()
+    if path != "/login":
+        log_in(client)
+    before = {p: p.read_bytes() for p in labels_dir.rglob("*") if p.is_file()}
+    response = client.post(path, content=body, headers={"Content-Type": "application/x-www-form-urlencoded"},
+                           follow_redirects=False)
+    assert response.status_code in (200, 303) and "set-cookie" not in response.headers
+    assert {p: p.read_bytes() for p in labels_dir.rglob("*") if p.is_file()} == before
+
+
 def test_only_the_right_username_and_password_or_a_live_signed_session_log_in(portal, monkeypatch):
     client, _, _ = portal
     for username, password in (("me", "nope"), ("you", "correct horse")):
@@ -255,6 +283,19 @@ def test_a_spot_that_isnt_a_point_on_earth_writes_nothing(portal, action, latitu
     before = {p: p.read_bytes() for p in labels_dir.rglob("*") if p.is_file()}
     response = client.post("/places", data={"action": action, "name": "Back Room", "latitude": latitude,
                                             "longitude": longitude}, follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/places"
+    assert {p: p.read_bytes() for p in labels_dir.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("action", ["drop", "at"])
+@pytest.mark.parametrize("start, end", [("noon", "1767225830"), ("nan", "1767225830"), ("1767225590", "inf"),
+                                        ("-inf", "1767225830")])
+def test_a_span_of_readings_that_isnt_two_times_writes_nothing(portal, action, start, end):
+    client, _, labels_dir = portal
+    log_in(client)
+    before = {p: p.read_bytes() for p in labels_dir.rglob("*") if p.is_file()}
+    response = client.post("/places", data={"action": action, "name": "Back Room", "start": start, "end": end},
+                           follow_redirects=False)
     assert response.status_code == 303 and response.headers["location"] == "/places"
     assert {p: p.read_bytes() for p in labels_dir.rglob("*") if p.is_file()} == before
 
@@ -446,7 +487,8 @@ def test_a_day_reads_its_conversations_through_in_order_by_the_host_s_clock(port
     assert page.index('<section id="c1">') < page.index("1 h 59 min quiet") < page.index('<section id="c2">')
     assert ">19:00:00</a>" in page and "<a href='/day/2026-01-01'>Thu Jan 1 →</a>" in page and "←" not in page.split("<h1>")[1]
     assert "<a href='/day/2025-12-31'>Wed Dec 31</a>" in client.get("/conversations").text
-    assert client.get("/day/not-a-day").status_code == 404
+    for day in ("not-a-day", "0001-01-01", "9999-12-31"):
+        assert client.get(f"/day/{day}").status_code == 404
 
     # Acting on a day's page comes back to it.
     thrown = client.post("/forget", data={"conversation_id": "c2", "action": "whole", "back": "/day/2025-12-31#c2"},
