@@ -186,10 +186,12 @@ def write_if_changed(path: Path, data: bytes) -> None:
     os.replace(tmp, path)
 
 
-def published(stream_dir: Path) -> set[str]:
-    """The conversations in the stream as last written."""
+def published(stream_dir: Path) -> dict[str, tuple[float, float]]:
+    """The conversations in the stream as last written, with their spans."""
     index = stream_dir / "index.json"
-    return {e["conversation_id"] for e in json.loads(index.read_text())["conversations"]} if index.exists() else set()
+    entries = json.loads(index.read_text())["conversations"] if index.exists() else []
+    return {e["conversation_id"]: (datetime.fromisoformat(e["start"]).timestamp(),
+                                   datetime.fromisoformat(e["end"]).timestamp()) for e in entries}
 
 
 def write_stream(db_path: Path, stream_dir: Path, now: float | None = None) -> dict:
@@ -231,13 +233,15 @@ def write_stream(db_path: Path, stream_dir: Path, now: float | None = None) -> d
 
     conversation_dir = stream_dir / "conversations"
     conversation_dir.mkdir(parents=True, exist_ok=True)
-    already = published(stream_dir)
+    # A conversation over speech already published isn't held, though late
+    # audio may have given it a new id: the stream never withdraws speech.
+    published_spans = list(published(stream_dir).values())
     now = time.time() if now is None else now
     index, holding = [], 0
     for conversation_id, start, end, is_open in conversations:
         if within(gone, start, end):
             continue
-        if conversation_id not in already and held(start, end, releases, now):
+        if not overlaps(published_spans, start, end) and held(start, end, releases, now):
             holding += 1
             continue
         entry = {"conversation_id": conversation_id, "start": iso(start), "end": iso(end),

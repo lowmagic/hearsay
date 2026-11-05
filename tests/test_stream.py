@@ -1,10 +1,11 @@
 import json
 import sqlite3
+from datetime import datetime, timezone
 
 from hearsay.affect import SCHEMA as AFFECT_SCHEMA
 from hearsay.assemble import SCHEMA as ASSEMBLE_SCHEMA
 from hearsay.delivery import SCHEMA as DELIVERY_SCHEMA
-from hearsay.forget import SCHEMA as FORGET_SCHEMA
+from hearsay.forget import SCHEMA as FORGET_SCHEMA, forget
 from hearsay.hold import HOLD, SCHEMA as HOLD_SCHEMA
 from hearsay.media import SCHEMA as MEDIA_SCHEMA
 from hearsay.music import SCHEMA as MUSIC_SCHEMA
@@ -12,7 +13,7 @@ from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
 from hearsay.parse import SCHEMA as PARSE_SCHEMA
 from hearsay.places import SCHEMA as PLACES_SCHEMA
 from hearsay.speakers import SCHEMA as SPEAKERS_SCHEMA
-from hearsay.stream import write_stream
+from hearsay.stream import iso, write_stream
 from hearsay.turns import SCHEMA as TURNS_SCHEMA
 
 T = 1_790_000_000.0  # unix seconds; conversation c1's WAV starts here
@@ -82,10 +83,8 @@ def test_stream_attributes_speakers_and_leaves_out_non_speech(tmp_path):
     assert utterances[0]["speaker_confidence"] == {"basis": "voice", "owner_similarity": 0.71}
     assert utterances[7]["speaker_confidence"] == {"basis": "diarization", "owner_similarity": None}
     assert utterances[0]["affect"] == {"arousal": 0.42}  # only arousal: dominance and valence aren't checked
-    assert all("affect" not in u for u in utterances[1:])
     assert utterances[0]["delivery"] == {"words_per_second": 4.1, "pauses": 1, "pause_seconds": 0.6, "stutters": [
         {"kind": "repeat", "at": "2026-09-21T14:13:22.000Z", "words_per_second_before": 4.8, "word": 1}]}
-    assert all("delivery" not in u for u in utterances[1:])
     assert [(e["conversation_id"], e["transcribed"], e["open"], e["utterances"]) for e in index] == [
         ("c1", True, False, 8), ("c2", False, True, 0)]
 
@@ -164,6 +163,44 @@ def test_a_clip_s_tag_corrects_the_owner_but_a_speaker_s_tag_does_not(tmp_path):
     assert found["first anon again"] == ("stranger", "named")  # _mic streams as someone else present
 
 
+def test_other_people_s_tone_and_delivery_never_reach_the_stream(tmp_path):
+    db_path, stream_dir = build(tmp_path), tmp_path / "stream"
+    db = sqlite3.connect(db_path)
+    # Scored as the owner's by voice, but the operator heard someone else.
+    db.execute("INSERT INTO operator_input VALUES ('c1:0000', 'clip', '_stranger')")
+    db.commit()
+    db.close()
+    write_stream(db_path, stream_dir)
+    _, utterances = read(stream_dir)
+    assert utterances[0]["speaker"]["kind"] == "stranger"
+    assert "affect" not in utterances[0] and "delivery" not in utterances[0]
+
+
+def test_a_stretch_thrown_out_takes_every_utterance_it_touches(tmp_path):
+    db_path, stream_dir, labels = build(tmp_path), tmp_path / "stream", tmp_path / "labels"
+    labels.mkdir()
+    # Turn i spans 10i to 10i + 5 s: this stretch clips the end of turn 1 and the start of turn 2.
+    at = [datetime.fromtimestamp(T + s, timezone.utc).isoformat() for s in (14, 21)]
+    (labels / "forget.jsonl").write_text(json.dumps({"type": "forget", "at": at, "tagged_at": "2026-10-01T12:00:00+00:00"}))
+    assert forget(db_path, labels)["turns_removed"] == 2
+    write_stream(db_path, stream_dir)
+    _, utterances = read(stream_dir)
+    assert [u["text"] for u in utterances] == [
+        "mine", "second anon", "first anon again", "a cashier", "too short to tell", "yeah (inherited)"]
+
+    # What forgotten.json lists stays out even where the database still has the turns.
+    (tmp_path / "again").mkdir()
+    db_path, stream_dir = build(tmp_path / "again"), tmp_path / "again" / "stream"
+    stream_dir.mkdir()
+    (stream_dir / "forgotten.json").write_text(json.dumps([{
+        "forgotten_at": "2026-10-01T12:00:00.000Z", "start": iso(T + 34), "end": iso(T + 41),
+        "conversation_id": "c1", "utterance_ids": ["c1:0003", "c1:0004"], "reason": None}]))
+    write_stream(db_path, stream_dir)
+    _, utterances = read(stream_dir)
+    assert [u["text"] for u in utterances] == [
+        "mine", "walter's", "first anon", "a cashier", "too short to tell", "yeah (inherited)"]
+
+
 def test_revisions_change_only_when_a_conversation_does(tmp_path):
     db_path, stream_dir = build(tmp_path), tmp_path / "stream"
     write_stream(db_path, stream_dir)
@@ -225,8 +262,14 @@ def test_a_conversation_is_held_two_weeks_unless_released_and_once_published_sta
     assert published(T + 3600) == ["c1"] and (stream_dir / "conversations/c1.jsonl").exists()
     release(T)  # taken out of the labels: c1 is already published, so it stays
     assert published(T + 3600) == ["c1"]
-    assert published(T + 560 + HOLD - 1) == ["c1"]
-    assert published(T + 560 + HOLD) == ["c1", "c2"]
+    # Late audio moves c1's start, so it's c0 now and the release no longer covers it: what was published stays.
+    db = sqlite3.connect(db_path)
+    db.execute("UPDATE conversations SET conversation_id = 'c0', start = ? WHERE conversation_id = 'c1'", (T - 30,))
+    db.commit()
+    db.close()
+    assert published(T + 3600) == ["c0"]
+    assert published(T + 560 + HOLD - 1) == ["c0"]
+    assert published(T + 560 + HOLD) == ["c0", "c2"]
 
 
 def test_forgotten_list_exists_and_is_never_rewritten(tmp_path):

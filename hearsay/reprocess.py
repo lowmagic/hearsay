@@ -8,12 +8,14 @@ an hourly enqueue (install/nas.sh) catches uploads that couldn't.
 
 Every run builds a complete new database from raw in a scratch directory
 (a tmpfs in the container), then brings the real one up to date in a single
-transaction that changes only the rows that differ. So the portal and the
-label tool always read a complete database, a failed run leaves the previous
-one in place, and a run with nothing new writes almost nothing to disk (the
-NAS keeps snapshots, so every rewritten byte is kept many times). A schema
-change replaces the changed table inside the same transaction. Deleting
-the database is always safe: the next run fills a new one from raw.
+transaction that changes only the rows that differ. WAVs that changed are
+staged beside the real ones and moved into place only after that. So the
+portal and the label tool always read a complete database, a failed run
+leaves the previous database and audio in place, and a run with nothing new
+writes almost nothing to disk (the NAS keeps snapshots, so every rewritten
+byte is kept many times). A schema change replaces the changed table inside
+the same transaction. Deleting the database is always safe: the next run
+fills a new one from raw.
 
 Conversations that settled a week ago are sealed at the end of a run
 (hearsay/records.py), and later runs take them from their records without
@@ -26,6 +28,7 @@ each other).
 
 import fcntl
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -34,7 +37,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from hearsay import conversations, speakers
-from hearsay.assemble import assemble, remove_stale_wavs
+from hearsay.assemble import assemble, promote_wavs, remove_stale_wavs
 from hearsay.cache import Cache
 from hearsay.capture import load_captures
 from hearsay.conversations import find_conversations
@@ -71,9 +74,11 @@ def lock(db_path: Path):
         yield
 
 
-def build(env: dict[str, Path], staging: Path, records_dir: Path | None, unseal_late: bool = False) -> None:
-    """Build a complete database at staging: from records behind the seal line
-    (hearsay/records.py), or with records_dir None all from raw."""
+def build(env: dict[str, Path], staging: Path, staged_audio: Path, records_dir: Path | None,
+          unseal_late: bool = False) -> None:
+    """Build a complete database at staging, and the WAVs that changed at
+    staged_audio: from records behind the seal line (hearsay/records.py), or
+    with records_dir None all from raw."""
     cache = Cache(env["db"].parent / "cache.sqlite")
     try:
         sealed, imports = sealed_payloads(records_dir)
@@ -90,7 +95,8 @@ def build(env: dict[str, Path], staging: Path, records_dir: Path | None, unseal_
         report("Audio from the recorder:", load_captures(env["raw_dir"], staging, env["db"].parent / "capture-pcm"))
         report("Conversations found in the audio stream:", find_conversations(env["raw_dir"], staging, cache))
         report("Where conversations happened:", find_places(staging, env["labels_dir"]))
-        report(f"Assembled conversation audio in {env['audio_dir']}:", assemble(env["raw_dir"], staging, env["audio_dir"]))
+        report(f"Assembled conversation audio in {staged_audio}:",
+               assemble(env["raw_dir"], staging, env["audio_dir"], staged_audio))
         report(f"Turns from transcripts in {env['transcripts_dir']}:", build_turns(staging, env["transcripts_dir"]))
         # Before anything else reads turns, so thrown-out ones count for nothing.
         report("Stretches the operator threw out:", forget(staging, env["labels_dir"]))
@@ -108,10 +114,18 @@ def build(env: dict[str, Path], staging: Path, records_dir: Path | None, unseal_
 
 
 def run(env: dict[str, Path]) -> None:
+    # On the audio's own filesystem, so moving a WAV into place is a rename.
+    staged_audio = env["audio_dir"] / ".staged"
     with lock(env["db"]), tempfile.TemporaryDirectory(prefix="hearsay-reprocess-") as scratch:
-        staging = Path(scratch) / env["db"].name
-        build(env, staging, env["records_dir"], unseal_late=True)
-        report(f"Updated {env['db']} in place:", update_in_place(staging, env["db"]))
+        shutil.rmtree(staged_audio, ignore_errors=True)
+        staged_audio.mkdir()
+        try:
+            staging = Path(scratch) / env["db"].name
+            build(env, staging, staged_audio, env["records_dir"], unseal_late=True)
+            report(f"Updated {env['db']} in place:", update_in_place(staging, env["db"]))
+            print(f"Moved {promote_wavs(staged_audio, env['audio_dir'])} changed WAV(s) into place.")
+        finally:
+            shutil.rmtree(staged_audio, ignore_errors=True)
         # From the database now in place, so the stream always matches it.
         report(f"Utterance stream in {env['stream_dir']}:", write_stream(env["db"], env["stream_dir"]))
         print(f"Removed {remove_stale_wavs(env['audio_dir'], env['db'])} stale WAV(s).")

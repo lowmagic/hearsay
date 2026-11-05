@@ -47,6 +47,11 @@ def test_imported_audio_fills_the_gap_and_live_audio_wins_the_overlap(tmp_path):
     assert db.execute("SELECT coverage FROM conversation_audio").fetchone() == (1.0,)
     db.close()
 
+    # An import whose bytes no longer match its sidecar is refused, not decoded.
+    (imports / "a.wav").write_bytes(data[:-2] + b"\x00\x00")
+    with pytest.raises(ValueError):
+        load_imports(imports, db_path, cache)
+
     # Removing the import drops its decoded cache too.
     (imports / "a.wav.json").unlink()
     load_imports(imports, db_path, cache)

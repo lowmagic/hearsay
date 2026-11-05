@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from hearsay import capture
 from hearsay.assemble import assemble
 from hearsay.conversations import find_conversations
 from hearsay.imports import load_imports
@@ -127,13 +128,26 @@ def test_failed_rebuild_keeps_previous_database(tmp_path, damage):
     if damage == "malformed_transcript":
         post(raw, "transcript", b'[{"text": "bare array"}]', "key-bad")
     else:
-        next(raw.glob("memory/*/*.body")).write_bytes(b"{}")
+        # Still a valid memory, so only the sha check against the sidecar can catch it.
+        body = next(raw.glob("memory/*/*.body"))
+        body.write_bytes(body.read_bytes().replace(b'"completed"', b'"processing"'))
 
     with pytest.raises(ParseFailed) as failed:
         rebuild(raw, db_path)
     assert len(failed.value.errors) == 1
     assert dump(db_path) == good
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_capture_upload_spans_its_earliest_to_latest_record(tmp_path):
+    # first_at/last_at decide which uploads are sealed (hearsay/records.py).
+    raw, t = tmp_path / "raw", 1767268800.0
+    post(raw, "capture", b"".join(capture.RECORD_HEADER.pack(at, capture.CONNECTED, 0) for at in (t, t + 10)),
+         "key-c1")
+    rebuild(raw, tmp_path / "h.sqlite")
+    db = sqlite3.connect(tmp_path / "h.sqlite")
+    assert db.execute("SELECT first_at, last_at FROM payloads").fetchall() == [(t, t + 10)]
+    db.close()
 
 
 # Runs only where real captures are mounted (the NAS check container). Real

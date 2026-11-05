@@ -1,16 +1,31 @@
 import sqlite3
 from array import array
 
-from hearsay.speakers import SCHEMA as SPEAKERS_SCHEMA, inherit_labels
+import pytest
+
+from hearsay.speakers import DIARIZATION_AGREEMENT, SCHEMA as SPEAKERS_SCHEMA, inherit_labels
 from hearsay.turns import SCHEMA as TURNS_SCHEMA
 
 # Three orthogonal voices stand in for embeddings.
 ME, ANA, BOB = [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]
 
 
-def test_unlabeled_turns_take_their_diarized_speakers_label_only_when_it_agrees():
+def speakers_db(turns):
+    """A fresh db holding the turns; unlabeled turns' voices come back as short turns' embeddings."""
     db = sqlite3.connect(":memory:")
     db.executescript(TURNS_SCHEMA + SPEAKERS_SCHEMA)
+    short = {}
+    for idx, (turn_id, conversation, speaker, seconds, label, voice) in enumerate(turns):
+        db.execute("INSERT INTO turns VALUES (?,?,?,0,?,'',?,NULL)", (turn_id, conversation, idx, seconds, speaker))
+        embedding = array("f", voice).tobytes() if label else None
+        if not label:
+            short[turn_id] = voice
+        db.execute("INSERT INTO turn_speakers VALUES (?,?,1,?,NULL,?,?, NULL, NULL)",
+                   (turn_id, conversation, embedding, label, "voice" if label else None))
+    return db, short
+
+
+def test_unlabeled_turns_take_their_diarized_speakers_label_only_when_it_agrees():
     # (turn, conversation, diarized speaker, seconds, label by voice, voice)
     turns = [
         # S0 is the owner by voice; its short turn follows.
@@ -27,14 +42,7 @@ def test_unlabeled_turns_take_their_diarized_speakers_label_only_when_it_agrees(
         # No diarized speaker: nothing to go on.
         ("t9", "c1", None, 1, None, BOB),
     ]
-    short = {}
-    for idx, (turn_id, conversation, speaker, seconds, label, voice) in enumerate(turns):
-        db.execute("INSERT INTO turns VALUES (?,?,?,0,?,'',?,NULL)", (turn_id, conversation, idx, seconds, speaker))
-        embedding = array("f", voice).tobytes() if label else None
-        if not label:
-            short[turn_id] = voice
-        db.execute("INSERT INTO turn_speakers VALUES (?,?,1,?,NULL,?,?, NULL, NULL)",
-                   (turn_id, conversation, embedding, label, "voice" if label else None))
+    db, short = speakers_db(turns)
 
     assert inherit_labels(db, ME, short) == {"inherited_owner": 1, "inherited_not_owner": 1,
                                              "not_inherited_sounds_like_owner": 1}
@@ -43,3 +51,16 @@ def test_unlabeled_turns_take_their_diarized_speakers_label_only_when_it_agrees(
     assert got["t4"] == ("not_owner", "diarization")
     assert got["t3"] == ("owner", "voice")  # voice labels are never overridden
     assert got["t10"] == got["t7"] == got["t8"] == got["t9"] == (None, None)
+
+
+@pytest.mark.parametrize("owner_seconds, inherited", [
+    (10 * DIARIZATION_AGREEMENT, "owner"),  # exactly the agreement bar
+    (10 * DIARIZATION_AGREEMENT - 0.1, None),
+])
+def test_a_speaker_passes_its_label_on_from_the_agreement_bar(owner_seconds, inherited):
+    db, short = speakers_db([
+        ("t0", "c1", "S0", owner_seconds, "owner", ME), ("t1", "c1", "S0", 10 - owner_seconds, "not_owner", ANA),
+        ("t2", "c1", "S0", 1, None, ME),
+    ])
+    inherit_labels(db, ME, short)
+    assert db.execute("SELECT label FROM turn_speakers WHERE turn_id = 't2'").fetchone()[0] == inherited

@@ -182,7 +182,9 @@ sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay
   aligned so that segment times are offsets into the file. Missing audio is
   silence; the `conversation_audio` table records how each file was aligned
   and what fraction of it is real audio. A WAV is rewritten only when its
-  audio changes.
+  audio changes, and the new one is moved in (from `audio/.staged/`) only
+  once the database describing it is in place, so a failed run leaves the
+  old audio too.
 
 - Speaker embeddings and owner / not-owner labels per segment, in the
   `segment_speakers` table.
