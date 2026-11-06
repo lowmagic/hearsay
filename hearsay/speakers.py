@@ -46,8 +46,13 @@ MIN_EMBED = 0.1
 MIN_COVERAGE = 0.8
 # Enrollment audio is embedded in pieces this long, then averaged.
 ENROLLMENT_PIECE = 3.0
-# Cosine similarity to the owner's enrolled voice.
-OWNER_THRESHOLD = 0.40
+# Cosine similarity to the owner's enrolled voice. Measured by ear on
+# 2026-11-06 (152 labels, about 55 drawn between 0.30 and 0.40): owner at
+# 0.30 is 0.99 precise (the miss a turn mostly someone else's, merged with
+# the owner's "um") and finds 0.95 of the owner's turns, against 0.47 at
+# 0.40. Not-owner at 0.14 is 1.00 precise and finds 0.79, from only 39
+# not-owner labels; it waits for more.
+OWNER_THRESHOLD = 0.30
 NOT_OWNER_THRESHOLD = 0.14
 # Share of a diarized speaker's voice-labeled seconds that must carry one
 # label before its unlabeled turns take it. On real data (2026-10-01), 51 of
