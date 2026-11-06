@@ -62,6 +62,13 @@ Hearsay's own turns: an owner turn by voice was right 49 of 49 times, one by
 diarization 147 of 162 (the misses are short interjections). Idea Machine's
 M2 validates me / not me with these.
 
+Owner threshold lowered from 0.40 to 0.30 on 2026-11-06, labeling about 55
+turns between 0.30 and 0.40 blind (`hearsay-label --between`): of 152 labeled
+turns with scores, owner at 0.30 is 0.99 precise (one miss, a turn mostly
+someone else's that diarization merged with the owner's "um") and finds 0.95
+of the owner's turns, against 0.47 at 0.40. Not-owner stays at 0.14 (1.00
+precise, 0.79 found) until more than 39 not-owner turns are labeled.
+
 
 ## 6. Local transcription (WhisperX)
 
@@ -310,9 +317,7 @@ Decided 2026-11-05, with the operator:
 - No tuning has to come first: thresholds and the media and music rules run
   on stored vectors and can be retuned at any time. Only a new
   transcription, diarization or speaker model is limited to the window.
-  Owner-threshold labels show room (100 labels: owner at 0.30 keeps
-  precision 1.00 and lifts recall from 0.78 to 0.90), with only 8 labels
-  between 0.30 and 0.40 so far.
+  Owner threshold lowered from 0.40 to 0.30 on 2026-11-06 (slice 5).
 - Open: words cut from a record for a stretch thrown out after sealing
   stay in the records' and database's snapshots up to 2 months.
 
