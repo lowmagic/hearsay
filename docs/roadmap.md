@@ -66,8 +66,10 @@ Owner threshold lowered from 0.40 to 0.30 on 2026-11-06, labeling about 55
 turns between 0.30 and 0.40 blind (`hearsay-label --between`): of 152 labeled
 turns with scores, owner at 0.30 is 0.99 precise (one miss, a turn mostly
 someone else's that diarization merged with the owner's "um") and finds 0.95
-of the owner's turns, against 0.47 at 0.40. Not-owner stays at 0.14 (1.00
-precise, 0.79 found) until more than 39 not-owner turns are labeled.
+of the owner's turns, against 0.47 at 0.40. Not-owner stays at 0.14: after
+about 40 more turns were labeled between 0.14 and 0.30, the owner was already
+3 of 14 turns from 0.14 to 0.18 (4 of 13 to 0.22, 8 of 12 to 0.26, 12 of 14
+to 0.30), so voice can't decide there; diarization and the portal do.
 
 
 ## 6. Local transcription (WhisperX)
