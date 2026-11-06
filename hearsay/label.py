@@ -13,6 +13,7 @@ rewritten only to add a window.
     python -m hearsay.label enroll START END   # add an enrollment window
     python -m hearsay.label import FILE START  # add audio the live stream missed
     python -m hearsay.label                    # label turns me / not me, blind
+    python -m hearsay.label --between LOW HIGH # the same, only turns scored LOW to HIGH
     python -m hearsay.label review             # re-hear labels the model disagrees with
     python -m hearsay.label check              # label turns labeled by diarization, blind
     python -m hearsay.label report             # precision/recall
@@ -213,10 +214,17 @@ def review_loop() -> None:
     print(f"\n{changed} label(s) changed. Reprocess on the NAS, then run `report`.")
 
 
-def label_loop() -> None:
+def label_loop(between: tuple[float, float] | None = None) -> None:
+    """Label unlabeled turns, spread across the similarity range, or only
+    across `between`'s (inclusive) to fill in the band a threshold falls in."""
     labeled = existing_labels()
     unlabeled = [s for s in playable(candidates()) if s["turn_id"] not in labeled]
-    print(f"{len(labeled)} labeled, {len(unlabeled)} to go.")
+    if between:
+        low, high = between
+        unlabeled = [s for s in unlabeled
+                     if s["owner_similarity"] is not None and low <= s["owner_similarity"] <= high]
+    scored = f" scored {between[0]:.2f} to {between[1]:.2f}" if between else ""
+    print(f"{len(labeled)} labeled, {len(unlabeled)}{scored} to go.")
     print("m = me, n = not me, u = unsure, s = skip, r = replay, q = quit")
     while unlabeled:
         turn = pick(unlabeled)
@@ -432,8 +440,20 @@ def main() -> None:
         music_report()
     elif not sys.argv[1:]:
         label_loop()
+    elif sys.argv[1:2] == ["--between"] and len(sys.argv) == 4:
+        label_loop(band(sys.argv[2], sys.argv[3]))
     else:
         sys.exit(__doc__)
+
+
+def band(low: str, high: str) -> tuple[float, float]:
+    try:
+        between = float(low), float(high)
+    except ValueError:
+        sys.exit(f"--between takes two similarities, e.g. --between 0.30 0.40, not {low} {high}")
+    if between[0] > between[1]:
+        sys.exit(f"--between takes the low similarity first, e.g. --between {high} {low}")
+    return between
 
 
 if __name__ == "__main__":

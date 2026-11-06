@@ -266,7 +266,9 @@ as a command with
    `.venv/bin/python -m hearsay.label enroll 2026-09-27T10:05 2026-09-27T10:08`
 2. Reprocess on the NAS (above).
 3. Label segments by ear: `.venv/bin/python -m hearsay.label` (plays audio
-   locally, over `ssh nas`).
+   locally, over `ssh nas`). Turns are drawn across the whole similarity
+   range; to fill in the band a threshold falls in, add
+   `--between 0.30 0.40` and only turns scored in it play.
 4. Re-hear the labels the model disagrees with, answering fresh:
    `.venv/bin/python -m hearsay.label review`. Answer `u` whenever you can't
    tell; a guess does more harm than no label.
