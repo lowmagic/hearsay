@@ -8,9 +8,10 @@ Omi's webhooks used to land here too, through a public Cloudflare tunnel;
 both were removed once Omi was no longer used (its last payload is from
 2026-09-30). Those raw payloads are kept and still parsed (hearsay/parse.py).
 
-After each upload it enqueues the pipeline on corral (hearsay/enqueue.py),
-once the response is sent. If corral can't be reached, the hourly cron's
-enqueue picks the upload up instead.
+After each upload it enqueues a check on corral (hearsay/enqueue.py CHECK),
+once the response is sent, which enqueues the pipeline once a conversation
+has ended (hearsay/check.py). If corral can't be reached, the hourly cron's
+check picks the upload up instead.
 
 Rejected requests are logged (whether a token was sent, and the client
 address), so a sender with a wrong token shows up in the journal instead of
@@ -107,11 +108,11 @@ def capture_app_from_env() -> FastAPI:
         return create_capture_app(raw_dir, token)
     corral_token = os.environ["CORRAL_TOKEN"]
 
-    def enqueue_pipeline() -> None:
+    def enqueue_check() -> None:
         try:
-            enqueue.enqueue(corral_url, corral_token)
+            enqueue.post(corral_url, corral_token, enqueue.CHECK)
         except OSError as e:  # urllib's errors, refused connections and timeouts included
-            log.warning("couldn't enqueue on corral (%s); the hourly enqueue will pick this upload up", e)
+            log.warning("couldn't enqueue on corral (%s); the hourly check will pick this upload up", e)
 
-    return create_capture_app(raw_dir, token, enqueue_pipeline)
+    return create_capture_app(raw_dir, token, enqueue_check)
 

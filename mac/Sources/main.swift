@@ -48,8 +48,8 @@ final class Recorder: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         refresh()
-        // Uploads cover a minute each; the NAS reprocesses hourly, so there's
-        // no point in smaller ones.
+        // Uploads cover a minute each; the NAS waits for 3 minutes without
+        // speech before it transcribes, so there's no point in smaller ones.
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in self.spool.queue.async { self.spool.sync() } }
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in self.spool.queue.async { self.spool.seal() } }
         Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { _ in

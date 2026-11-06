@@ -101,8 +101,8 @@ Where Hearsay doesn't follow the org standards yet. These are debt to pay down, 
   extra, not a `dev` dependency group. It builds with setuptools, not hatchling.
 - Python tooling: `make check` runs pytest only. Ruff and mypy aren't configured or run.
 - Python layout: the package is `hearsay/`, not `src/hearsay/`. Only `hearsay-label` is a `[project.scripts]` entry;
-  `hearsay.reprocess`, `hearsay.transcribe` and `hearsay.enqueue` run as `python -m`, and `hearsay.label`'s `main()`
-  reads `sys.argv` by hand, not with argparse.
+  `hearsay.reprocess`, `hearsay.check`, `hearsay.transcribe` and `hearsay.enqueue` run as `python -m`, and
+  `hearsay.label`'s `main()` reads `sys.argv` by hand, not with argparse.
 - Python typing: 20 functions lack a parameter or return annotation, most of them model code
   (`hearsay/affect.py:47-80`, `hearsay/speakers.py:84-124`, `hearsay/transcribe.py:137-229`).
 - Python data modeling: records are tuples, and `OperatorInput` (`hearsay/turns.py:56`) is a `NamedTuple` of mutable
@@ -112,9 +112,10 @@ Where Hearsay doesn't follow the org standards yet. These are debt to pay down, 
   `operator_input.kind` (`hearsay/turns.py:227-251`), the owner/not_owner labels (`hearsay/stream.py:82-84`,
   `hearsay/label.py:44`) and `turn_speakers.basis` (`hearsay/stream.py:70`). `marks.kind` and `turn_stutters.kind`
   are only written from Python and compared in SQL, so they need only the `CHECK`.
-- Python errors: a missing setting raises `KeyError` (`HEARSAY_DB` and the rest at `hearsay/portal.py:697`, the
-  directories at `hearsay/reprocess.py:168`, `hearsay/receiver.py:98`, `hearsay/enqueue.py:40`), and an empty one
-  `RuntimeError` (`hearsay/portal.py:696`, `hearsay/receiver.py:100`), not `SystemExit`.
+- Python errors: a missing setting raises `KeyError` (`HEARSAY_DB` and the rest at `hearsay/portal.py:1345`, the
+  directories at `hearsay/reprocess.py:248` and `hearsay/check.py:100`, `hearsay/receiver.py:102`,
+  `hearsay/enqueue.py:73`), and an empty one `RuntimeError` (`hearsay/portal.py:1339`, `hearsay/receiver.py:85`),
+  not `SystemExit`.
 - Python testing: test files are one per module (`tests/test_capture.py`, `tests/test_portal.py`, ...), not named for
   the behavior they cover; only `tests/test_inheritance.py` is. `make check` runs `pytest -q`, not `-rs`, so the skips
   don't show.

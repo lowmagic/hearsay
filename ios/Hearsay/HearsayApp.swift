@@ -35,7 +35,8 @@ final class Recorder {
             pendant.muted ? nil : pause.paused ? pause.window : spool
         }
 
-        // Uploads cover a minute each; the NAS reprocesses hourly, so there's
+        // Uploads cover a minute each; the NAS waits for 3 minutes without
+        // speech before it transcribes, so there's
         // no point in smaller ones. Timers only fire while the app runs,
         // which in the background is while the pendant is sending.
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [spool, pause, location] _ in

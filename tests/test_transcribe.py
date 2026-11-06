@@ -1,5 +1,12 @@
-from hearsay.transcribe import PIECE_SECONDS, chunk, label_segments, pieces
+import json
+import sqlite3
+import time
+
+from hearsay import transcribe
+from hearsay.assemble import SCHEMA as AUDIO_SCHEMA
+from hearsay.transcribe import PIECE_SECONDS, SETTINGS, chunk, label_segments, pending, pieces
 from hearsay.turns import split_turns
+from test_assemble import add_conversations
 
 
 def test_pieces_cover_the_whole_conversation_and_cut_in_pauses():
@@ -45,3 +52,32 @@ def test_a_chunk_takes_conversations_until_their_audio_fills_the_hint():
     # No hint (run by hand, or no history yet): everything.
     assert chunk(todo, None) == todo
     assert chunk([], 60.0) == []
+
+
+def test_a_conversation_still_going_on_is_left_until_it_ends(tmp_path, monkeypatch):
+    db_path = tmp_path / "hearsay.sqlite"
+    now = time.time()
+    # c1 ended; c2 is going on; c3 is open too, but its recording stopped long since.
+    add_conversations(db_path, [("c1", 0.0, 600.0, 400.0, 0), ("c2", now - 300, now - 30, 200.0, 1),
+                                ("c3", 900.0, 1200.0, 200.0, 1)])
+    db = sqlite3.connect(db_path)
+    db.executescript(AUDIO_SCHEMA)
+    db.executemany("INSERT INTO conversation_audio VALUES (?, '', ?, 1.0, ?, ?, 0)",
+                   [("c1", 600.0, "c1.wav", "sha1"), ("c2", 270.0, "c2.wav", "sha2"),
+                    ("c3", 300.0, "c3.wav", "sha3")])
+    db.commit()
+    db.close()
+
+    def ssh(command, stdin=b""):
+        """The NAS: the database query, and no transcripts or failure markers yet."""
+        if command[0] != "sqlite3":
+            return json.dumps([{}, {}]).encode()
+        db = sqlite3.connect(db_path)
+        db.row_factory = sqlite3.Row
+        try:
+            return json.dumps([dict(row) for row in db.execute(command[3].strip('"'))]).encode()
+        finally:
+            db.close()
+
+    monkeypatch.setattr(transcribe, "ssh", ssh)
+    assert [r["conversation_id"] for r in pending(SETTINGS)] == ["c1", "c3"]

@@ -27,6 +27,11 @@ from hearsay.cache import Cache, audio_key
 
 # A conversation ends after this long without speech.
 GAP = 180.0
+# Uploads come every minute while recording, so an open conversation this long
+# past its last speech has ended all the same: recording stopped within GAP of
+# it. Its `open` stays as the stream defines it (docs/stream.md); only when to
+# transcribe it goes by this (hearsay/check.py, hearsay/transcribe.py pending).
+STOPPED = GAP + 300.0
 # Conversations with less speech than this are dropped (stray remarks,
 # passing chatter).
 MIN_SPEECH = 30.0

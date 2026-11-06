@@ -14,8 +14,9 @@ Secrets are kept in env files outside the repo.
 The pipeline runs on [corral](https://github.com/junglestyle/corral), set up
 first from the infra repo: its server on the NAS, a NAS worker offering `nas`
 from `/mnt/fast/corral-worker`, and a user worker offering `gpu` on the dev
-box. `nas.sh` and `gpu.sh` add Hearsay's
-kinds to those workers and check they're running.
+box. Corral must be a version with held jobs (`wait_seconds`): update it before Hearsay.
+`nas.sh` and `gpu.sh` add Hearsay's kinds to those workers and check they're
+running, and `nas.sh` that the server has held jobs.
 
 1. **Dev box (optional):** [`install/dev.sh`](../install/dev.sh) sets up a venv, a dev secret in
    `~/.config/hearsay/dev.env`, and runs the tests.
@@ -134,19 +135,31 @@ whenever the upload format changes.
 Everything derived from raw is rebuilt by reprocess, which corral's NAS
 worker runs (log: `journalctl -t hearsay-reprocess`; the portal and capture
 receiver log to the journal too, e.g.
-`journalctl CONTAINER_NAME=hearsay-capture`). After each upload the capture
-receiver enqueues the pipeline ([`hearsay/enqueue.py`](../hearsay/enqueue.py)):
-reprocess to assemble the new audio into WAVs, transcription on the dev box,
-reprocess again to turn the transcripts into turns, then Idea Machine. A
-TrueNAS cron job enqueues the same chain hourly at :30, for uploads that
-couldn't reach corral (log: `journalctl -t hearsay-enqueue`).
+`journalctl CONTAINER_NAME=hearsay-capture`).
 Conversations are found in the audio stream itself (voice detection; a
-conversation ends after 3 minutes of silence), not taken from Omi. New audio
-flows WAV, then transcript, then turns as soon as each machine is free, with
-nothing to run by hand; `corral pause` on the dev box's worker holds
-transcription while you use its GPU. Transcription takes a backlog in chunks
-of about corral's window for `hearsay.transcribe`, so a pause takes effect
-between chunks. A conversation that fails to transcribe is left a marker in
+conversation ends after 3 minutes of silence, or at an end mark you make with
+the pendant's button), not taken from Omi. One counts as ended once the
+recording has run on 3 minutes past its last speech, or, if you stop
+recording sooner, 8 minutes after it (the hourly check finds it). After each upload the capture receiver
+enqueues a check ([`hearsay/check.py`](../hearsay/check.py), log:
+`journalctl -t hearsay-check`): it finds conversations the way reprocess
+does, with voice detection cached, and only when one has ended that the
+database doesn't have as ended yet, enqueues the pipeline
+([`hearsay/enqueue.py`](../hearsay/enqueue.py)): reprocess to assemble the new
+audio into WAVs, transcription on the dev box, reprocess again to turn the
+transcripts into turns, then Idea Machine. So a conversation is transcribed
+once, after it ends, not while it goes on. Transcription takes a backlog in
+chunks of about corral's window for `hearsay.transcribe`, and the second
+reprocess waits until it's done, but never more than 30 minutes, so a long
+backlog reaches the stream at least every half hour. A TrueNAS cron job
+enqueues the check hourly at :30, for uploads that couldn't reach corral and
+recordings stopped soon after their last speech, and another enqueues the
+whole pipeline nightly at 03:00, for what's due by time alone (a hold ending,
+sealing, retention) and anything a check missed; log: `journalctl -t hearsay-enqueue`.
+Edits in the portal start a reprocess of their own (Correcting who spoke,
+below). It all runs as each machine is free, with nothing to run by hand;
+`corral pause` on the dev box's worker holds transcription while you use its
+GPU, and takes effect between chunks. A conversation that fails to transcribe is left a marker in
 `transcripts/failed/` and skipped until its WAV or the settings change; delete
 the marker to retry it sooner. Each run builds
 a complete new database from raw in memory, then updates the real one in a
@@ -217,10 +230,11 @@ big, and when their audio ends):
 sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay/install/compose.yaml run --rm reprocess python -m hearsay.retention report
 ```
 
-To run the whole pipeline now, enqueue it on the NAS:
+To run the whole pipeline now, enqueue it on the NAS (`check` instead runs it
+only if a conversation has ended):
 
 ```sh
-sudo docker exec hearsay-capture python -m hearsay.enqueue
+sudo docker exec hearsay-capture python -m hearsay.enqueue chain
 ```
 
 To run only a reprocess, by hand, on the NAS. The lock is the worker's too,
@@ -338,8 +352,11 @@ media check the turns Hearsay is sure of; those marked yellow (it couldn't
 tell who spoke, or it might be media, or the voice is close to yours) are
 left for you. Check between fills in a stretch from the first turn checked
 to the last. Either way, with a few words of why if you like (Idea Machine sees
-them). Until the next reprocess (within the hour) you can undo it; then
-its words leave the stream and Hearsay's database for good, and Idea
+them). Each edit starts a reprocess once you've stopped making edits for 10
+minutes (at most 30 minutes after the first), so you can undo it until then.
+The portal's Apply now starts it as soon as the NAS is free. Words changes
+start the whole pipeline instead (below). Once it runs, its words leave the
+stream and Hearsay's database for good, and Idea
 Machine is told to delete what it took from them. Once the conversation is
 sealed (two weeks after it ends, or on the next reprocess if it already
 is), its audio is silenced, its words are cut from the records and
@@ -356,10 +373,10 @@ and waits as long as you like. Update commits them together with the words
 you approved in Lattice, which Idea Machine writes to
 `/mnt/fast/ideamachine/vocab/vocab.json`. The portal only reads it. `nas.sh`
 never creates that folder, since Idea Machine's dataset mounts there: if
-it's missing, the portal starts without it and `nas.sh` says so. Each Update re-transcribes
-the conversations not yet sealed (the last two weeks) on the dev box's next
-run, so batch your edits; to redo older ones too, unseal them (Reprocessing,
-above).
+it's missing, the portal starts without it and `nas.sh` says so. Each Update enqueues the
+pipeline, which re-transcribes the conversations not yet sealed (the last two
+weeks), so batch your edits; to redo older ones too, unseal them
+(Reprocessing).
 
 Tags are stored by the time of the turn you heard, in
 `/mnt/fast/hearsay/labels/`, so they survive re-transcription and apply to

@@ -45,6 +45,14 @@ between fills in a stretch. The mark is written to labels/forget.jsonl
 The Words page edits the words transcription is nudged toward
 (hearsay/words.py): a draft kept until the operator presses Update, which
 commits it with Lattice's approved terms all at once.
+
+Each edit a reprocess applies (a tag, a mark thrown out or taken back, a
+release, a place) enqueues one on corral once the response is sent
+(hearsay/enqueue.py APPLY): it runs once the edits have been quiet 10
+minutes, so a session of tagging is one run, and Apply now starts it as soon
+as the NAS is free. If corral can't be reached, the nightly pipeline applies
+them instead. A Words Update enqueues the whole pipeline (hearsay/enqueue.py
+CHAIN): it changes transcription, which a reprocess alone doesn't redo.
 """
 
 import asyncio
@@ -54,19 +62,22 @@ import hmac
 import html
 import io
 import json
+import logging
 import math
 import os
 import re
 import sqlite3
 import time
+import urllib.error
 import wave
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote
 
-from fastapi import FastAPI, Request, Response
+from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
+from hearsay import enqueue
 from hearsay.forget import read_marks
 from hearsay.hold import HOLD, held, read_releases
 from hearsay.media import HINT
@@ -85,6 +96,8 @@ from hearsay.speakers import NOT_OWNER_THRESHOLD
 from hearsay.stream import letters, published, speaker_kind
 from hearsay.turns import categories, read_operator_files, resolve, wall
 from hearsay.words import boosted, commit, read_committed, read_draft, read_lattice, save_draft, tidy
+
+log = logging.getLogger("hearsay.portal")
 
 COOKIE = "hearsay_session"
 SESSION_SECONDS = 30 * 24 * 3600
@@ -108,6 +121,8 @@ MATCHES_SHOWN = 3
 MEDIA_UNSURE = 0.5
 # Why a stretch was thrown out: a few words, which reach Idea Machine.
 REASON_CHARACTERS = 200
+# How long edits wait for another before the reprocess that applies them starts.
+APPLY_MINUTES = enqueue.APPLY["quiet_seconds"] // 60
 
 UNSURE_SQL = """
 SELECT t.turn_id, t.conversation_id, t.idx, t.start, t.end, t.text, ca.zero_at
@@ -155,9 +170,9 @@ button { font: inherit; width: 100%; padding: 0.8rem; margin-top: 0.6rem; }
 textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 0.6rem; min-height: 12rem; }
 .added { color: #2a8a3a; }
 .removed { color: #c33; text-decoration: line-through; }
-.tagged { display: flex; align-items: center; gap: 0.5rem; }
-.tagged span { flex: 1; }
-.tagged button { width: auto; margin: 0; padding: 0.4rem 1rem; }
+.tagged, .apply { display: flex; align-items: center; gap: 0.5rem; }
+.tagged span, .apply span { flex: 1; }
+.tagged button, .apply button { width: auto; margin: 0; padding: 0.4rem 1rem; }
 .filter { display: flex; gap: 0.5rem; }
 .filter select, .filter input { font: inherit; padding: 0.4rem; }
 .filter input { flex: 1; min-width: 0; }
@@ -450,7 +465,8 @@ def heard_at_spot(spot_times: list[float], times: list[float], turns: list[tuple
 
 
 def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Path, user: str, password: str,
-               session_key: str, app_token: str = "", vocab_path: Path | None = None) -> FastAPI:
+               session_key: str, app_token: str = "", vocab_path: Path | None = None, corral_url: str = "",
+               corral_token: str = "") -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     tags_path = labels_dir / "tags.jsonl"
 
@@ -513,6 +529,25 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Pat
             f.write(json.dumps(record) + "\n")
             f.flush()
             os.fsync(f.fileno())
+
+    def apply_later(background: BackgroundTasks) -> None:
+        """Once the response is sent, enqueue the reprocess that applies the edit just written."""
+        if corral_url:
+            background.add_task(enqueue_on_corral, enqueue.APPLY)
+
+    def enqueue_on_corral(spec: dict) -> None:
+        try:
+            enqueue.post(corral_url, corral_token, spec)
+        except OSError as e:  # urllib's errors, refused connections and timeouts included
+            log.warning("couldn't enqueue on corral (%s); the nightly pipeline will apply this edit", e)
+
+    def apply_form(back: str) -> str:
+        """Apply now, on the pages edits are made on. Without corral (local dev) there's nothing to ask."""
+        if not corral_url:
+            return ""
+        return (f"<form class='apply' method='post' action='/apply'><input type='hidden' name='back' value='{html.escape(back)}'>"
+                f"<span class='muted'>Edits apply in a reprocess {APPLY_MINUTES} min after the last one.</span>"
+                "<button type='submit'>Apply now</button></form>")
 
     def login_page(error: str = "") -> HTMLResponse:
         message = f"<p class='error'>{html.escape(error)}</p>" if error else ""
@@ -579,7 +614,7 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Pat
 <ul>{media_players}</ul>""" if media else ""
         return page("Hearsay", f"""
 <p class="nav"><a href="/day">Today</a> · <a href="/conversations">Conversations</a> · <a href="/places">Places</a> ·
-<a href="/words">Words</a></p>{media_section}
+<a href="/words">Words</a></p>{apply_form("/")}{media_section}
 <h1>Not sure who spoke</h1>
 <p class="muted">{len(unsure)} turn(s) Hearsay couldn't tell were you or not, latest first.
 Tag each; it applies at the next reprocess.</p>
@@ -608,7 +643,7 @@ Tag each; it applies at the next reprocess.</p>
         finally:
             db.close()
 
-    async def tag(request: Request, undo: bool, delete: bool = False) -> Response:
+    async def tag(request: Request, background: BackgroundTasks, undo: bool, delete: bool = False) -> Response:
         """Tag a turn, or take its tag back: a clip record with no name (hearsay.turns.resolve).
         Or delete it: throw it out (hearsay/forget.py), which can be taken back
         until a reprocess applies it. The page's script gets 204 or 401 instead
@@ -626,26 +661,28 @@ Tag each; it applies at the next reprocess.</p>
         # the turn id only for reference.
         if not delete:
             append_tag({"type": "clip", "at": [wall(*turn)], "turn_ids": [turn_id], "name": category})
+            apply_later(background)
         elif not (undo and applied(wall(*turn))):
             append_tag({"type": "undo" if undo else "forget", "at": wall(*turn), "turn_ids": [turn_id]},
                        labels_dir / "forget.jsonl")
+            apply_later(background)
         return Response(status_code=204) if script else RedirectResponse("/", status_code=303)
 
     @app.post("/turn")
-    async def tag_turn(request: Request) -> Response:
-        return await tag(request, undo=False)
+    async def tag_turn(request: Request, background: BackgroundTasks) -> Response:
+        return await tag(request, background, undo=False)
 
     @app.post("/turn/undo")
-    async def untag_turn(request: Request) -> Response:
-        return await tag(request, undo=True)
+    async def untag_turn(request: Request, background: BackgroundTasks) -> Response:
+        return await tag(request, background, undo=True)
 
     @app.post("/turn/delete")
-    async def delete_turn(request: Request) -> Response:
-        return await tag(request, undo=False, delete=True)
+    async def delete_turn(request: Request, background: BackgroundTasks) -> Response:
+        return await tag(request, background, undo=False, delete=True)
 
     @app.post("/turn/delete/undo")
-    async def undelete_turn(request: Request) -> Response:
-        return await tag(request, undo=True, delete=True)
+    async def undelete_turn(request: Request, background: BackgroundTasks) -> Response:
+        return await tag(request, background, undo=True, delete=True)
 
     @app.get("/conversations")
     async def list_conversations(request: Request) -> Response:
@@ -812,6 +849,7 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
         return page("Hearsay conversation", f"""
 <p><a href="/conversations">← Conversations</a> · <a href="/day/{local(found[0]):%Y-%m-%d}#{quote(conversation_id)}">Its day</a></p>
 <p class="muted">{TRANSCRIPT_HELP}</p>
+{apply_form(f"/conversations/{quote(conversation_id)}")}
 {section}
 <script>{TRANSCRIPT_SCRIPT}</script>""")
 
@@ -854,20 +892,22 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
 <p><a href="/">← Hearsay</a></p>
 <h1>{date:%A %B %-d}</h1>
 <p class="nav">{nav}</p>
+{apply_form(f"/day/{date}")}
 <p class="muted">{len(conversations)} conversation(s), in order. {TRANSCRIPT_HELP}</p>
 {"".join(sections) or "<p class='muted'>Nothing recorded.</p>"}
 <p class="nav">{nav}</p>
 <script>{TRANSCRIPT_SCRIPT}</script>""")
 
     def go_back(form: dict[str, list[str]]) -> Response:
-        """To the page the form was on: a conversation's, or its day's."""
+        """To the page the form was on: a conversation's, its day's, or another."""
         back = form.get("back", [""])[0]
         if not back.startswith("/") or back.startswith("//"):
-            back = f"/conversations/{quote(form.get('conversation_id', [''])[0])}"
+            conversation_id = form.get("conversation_id", [""])[0]
+            back = f"/conversations/{quote(conversation_id)}" if conversation_id else "/"
         return RedirectResponse(back, status_code=303)
 
     @app.post("/forget")
-    async def throw_out(request: Request) -> Response:
+    async def throw_out(request: Request, background: BackgroundTasks) -> Response:
         """Throw out the turns checked, or the whole conversation: marks by
         absolute time, which a reprocess applies. Turns checked one after
         another make one mark, so a stretch checked through is one mark; the
@@ -894,6 +934,7 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
         if action == "whole":
             append_tag({"type": "forget", "at": whole_seconds(*conversation), "reason": reason},
                        labels_dir / "forget.jsonl")
+            apply_later(background)
         elif action == "checked":
             runs, run = [], []
             for turn_id, zero_at, start, end in turns + [(None, None, None, None)]:
@@ -907,10 +948,12 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
                 span = (min(s for s, _ in run), max(e for _, e in run))
                 append_tag({"type": "forget", "at": [datetime.fromtimestamp(t, timezone.utc).isoformat() for t in span],
                             "reason": reason}, labels_dir / "forget.jsonl")
+            if runs:
+                apply_later(background)
         return go_back(form)
 
     @app.post("/release")
-    async def release(request: Request) -> Response:
+    async def release(request: Request, background: BackgroundTasks) -> Response:
         """Let a conversation that has ended reach the stream before its two weeks are up."""
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
@@ -924,10 +967,11 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
             db.close()
         if conversation and not conversation[2]:
             append_tag({"type": "release", "at": whole_seconds(*conversation[:2])}, labels_dir / "release.jsonl")
+            apply_later(background)
         return go_back(form)
 
     @app.post("/forget/undo")
-    async def take_back(request: Request) -> Response:
+    async def take_back(request: Request, background: BackgroundTasks) -> Response:
         """Take a mark back, unless a reprocess has applied it: then it's final."""
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
@@ -939,7 +983,39 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
             return go_back(form)
         if not final:
             append_tag({"type": "undo", "at": at}, labels_dir / "forget.jsonl")
+            apply_later(background)
         return go_back(form)
+
+    def start_now() -> None:
+        job_id, _ = enqueue.post(corral_url, corral_token, enqueue.APPLY)
+        try:
+            enqueue.release(corral_url, corral_token, job_id)
+        except urllib.error.HTTPError as e:
+            if e.code != 409:  # 409: a worker leased it in between, so it's running already
+                raise
+
+    @app.post("/apply")
+    async def apply_now(request: Request) -> Response:
+        """Start the reprocess that applies the edits so far as soon as the NAS is
+        free, rather than once they've been quiet a while. The edits are saved
+        either way, so a failure here only says so."""
+        script = request.headers.get("x-requested-with") == "fetch"
+        if not logged_in(request):
+            return Response(status_code=401) if script else RedirectResponse("/login", status_code=303)
+        form = await read_form(request)
+        if not corral_url:
+            problem, status = "corral isn't set up here (CORRAL_URL)", 503
+        else:
+            try:
+                await asyncio.to_thread(start_now)
+                return Response(status_code=204) if script else go_back(form)
+            except OSError as e:  # urllib's errors, refused connections and timeouts included
+                log.warning("couldn't apply now on corral (%s)", e)
+                problem, status = f"couldn't reach corral ({e})", 502
+        response = page("Hearsay", f"<p class='error'>Not applied: {html.escape(problem)}. Your edits are saved;"
+                                   " they apply at the next reprocess.</p><p><a href='/'>← Hearsay</a></p>")
+        response.status_code = status
+        return response
 
     @app.get("/conversations/{conversation_id}/audio")
     async def conversation_audio(request: Request, conversation_id: str) -> Response:
@@ -1018,6 +1094,7 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
 reach the stream, never coordinates; a reading counts as a place within 100 m of it, or the area set
 in the app's Places map. To put a place
 exactly where it is, find it in Maps, drop a pin, copy its coordinates, and paste them under Move here.</p>
+{apply_form("/places")}
 <h2>To name</h2><ul>{unnamed or "<li class='muted'>Nowhere new.</li>"}</ul>
 <h2>Named</h2><ul>{named or "<li class='muted'>None yet.</li>"}</ul>
 {f"<h2>Not places ({len(ignored)})</h2><ul>{not_places}</ul>" if ignored else ""}""")
@@ -1073,7 +1150,7 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
                          "conversations": at_spot(s["times"])} for s in unnamed]})
 
     @app.post("/places")
-    async def tag_place(request: Request) -> Response:
+    async def tag_place(request: Request, background: BackgroundTasks) -> Response:
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
         form = await read_form(request)
@@ -1113,19 +1190,19 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
             return (start, end) if math.isfinite(start) and math.isfinite(end) else None
 
         here, times = point(), span()
+        records = []
         if action == "name" and name and here:
-            append_tag(place(name, *here, radius(field("radius"))), places_path)
+            records = [place(name, *here, radius(field("radius")))]
         elif action == "rename" and name and field("from") and name != field("from"):
-            append_tag({"type": "rename", "from": field("from"), "to": name}, places_path)
+            records = [{"type": "rename", "from": field("from"), "to": name}]
         elif action in ("ignore", "unignore") and here:
             # As posted: the app sends a spot's centre in full, the page to 6 decimals (hearsay.places.read_ignored).
-            append_tag({"type": action, "latitude": here[0], "longitude": here[1]}, places_path)
+            records = [{"type": action, "latitude": here[0], "longitude": here[1]}]
         elif action == "forget" and field("from"):
-            append_tag({"type": "forget", "name": field("from")}, places_path)
+            records = [{"type": "forget", "name": field("from")}]
         elif action in ("drop", "at") and times and (action == "drop" or name):
             # A span of readings that was wrong, or was really at a named place (hearsay/places.py).
-            append_tag({"type": action, "start": times[0], "end": times[1]}
-                       | ({"name": name} if action == "at" else {}), places_path)
+            records = [{"type": action, "start": times[0], "end": times[1]} | ({"name": name} if action == "at" else {})]
         elif action == "move" and field("from"):
             # Its spots, where the phone's readings put them, give way to the points given:
             # one pasted here, or from the app's map each of the place's spots, one dragged
@@ -1134,10 +1211,13 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
             current = max((sp[3] for sp in read_places(labels_dir) if sp[0] == field("from")), default=RADIUS)
             radii = form.get("radius", [])
             if points and None not in points:
-                append_tag({"type": "forget", "name": field("from")}, places_path)
-                for i, (lat, lon) in enumerate(points):
-                    r = radius(radii[i], current) if i < len(radii) else current
-                    append_tag(place(field("from"), lat, lon, r), places_path)
+                records = [{"type": "forget", "name": field("from")}] + [
+                    place(field("from"), lat, lon, radius(radii[i], current) if i < len(radii) else current)
+                    for i, (lat, lon) in enumerate(points)]
+        for record in records:
+            append_tag(record, places_path)
+        if records:
+            apply_later(background)
         return RedirectResponse("/places", status_code=303)
 
     def proposed_words() -> tuple[dict[str, list[str]], list[str], str | None]:
@@ -1209,7 +1289,7 @@ as a draft until you press Update.</p>
 <p class="muted">{len(after)} word(s), {len(proposed["lattice"])} from Lattice.</p>""")
 
     @app.post("/words")
-    async def edit_words(request: Request) -> Response:
+    async def edit_words(request: Request, background: BackgroundTasks) -> Response:
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
         form = await read_form(request, keep_blank_values=True)
@@ -1227,6 +1307,9 @@ as a draft until you press Update.</p>
             if form.get("seen", [""])[0] != words_seen(proposed):
                 return RedirectResponse("/words?changed=1", status_code=303)
             commit(labels_dir, proposed["typed"], proposed["lattice"])
+            if corral_url:
+                # Transcription is what words change, so the whole pipeline, not APPLY.
+                background.add_task(enqueue_on_corral, enqueue.CHAIN)
         return RedirectResponse("/words", status_code=303)
 
     @app.get("/audio/{turn_id}")
@@ -1254,6 +1337,10 @@ def app_from_env() -> FastAPI:
     for key in ("HEARSAY_PORTAL_USER", "HEARSAY_PORTAL_PASSWORD", "HEARSAY_SESSION_KEY"):
         if not os.environ.get(key):
             raise RuntimeError(f"{key} is empty")
+    corral_url = os.environ.get("CORRAL_URL", "")
+    if not corral_url:
+        # A local dev portal (install/dev.sh) has no corral.
+        log.warning("CORRAL_URL isn't set: edits are saved but no reprocess is enqueued to apply them")
     return create_app(
         Path(os.environ["HEARSAY_DB"]),
         Path(os.environ["HEARSAY_AUDIO_DIR"]),
@@ -1267,4 +1354,7 @@ def app_from_env() -> FastAPI:
         os.environ.get("HEARSAY_CAPTURE_TOKEN", ""),
         # Idea Machine's vocab.json, mounted read-only (install/compose.yaml).
         Path(os.environ["HEARSAY_VOCAB_FILE"]) if os.environ.get("HEARSAY_VOCAB_FILE") else None,
+        # From corral.env (install/compose.yaml).
+        corral_url,
+        os.environ["CORRAL_TOKEN"] if corral_url else "",
     )
