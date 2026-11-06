@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # TrueNAS SCALE: datasets on the fast pool and their backups, secrets,
-# images, portal and capture containers, the reprocess kind on corral's
-# worker, and the hourly enqueue.
+# images, portal and capture containers, the reprocess and check kinds on
+# corral's worker, and the hourly check and nightly pipeline.
 # Run as root from the clone in /mnt/fast/repos/hearsay. Safe to re-run; also
 # how updates are deployed.
 set -euo pipefail
@@ -457,8 +457,8 @@ export HEARSAY_COMMIT
 "${COMPOSE[@]}" --profile tools build
 
 say "Corral (github.com/junglestyle/corral)"
-# Reprocess runs as a kind on corral's NAS worker, and the capture receiver
-# enqueues the pipeline after each upload. Corral is set up from the infra repo.
+# Reprocess and the check run as kinds on corral's NAS worker, and the capture
+# receiver enqueues a check after each upload. Corral is set up from the infra repo.
 systemctl is-active -q corral-worker && [ -f "$NAS_CORRAL_DIR/worker.toml" ] \
     || die "no corral worker running from $NAS_CORRAL_DIR. Set up corral's server and NAS worker from the infra repo,
 then re-run."
@@ -470,16 +470,26 @@ corral_token="$(env_get "$NAS_CORRAL_DIR/env" CORRAL_TOKEN)"
 corral_url="http://$HEARSAY_TAILNET_IP:$NAS_CORRAL_PORT"
 curl -fsS -o /dev/null -H "Authorization: Bearer $corral_token" "$corral_url/workers" \
     || die "corral's server doesn't answer at $corral_url with the token in $NAS_CORRAL_DIR/env"
-# Rewritten every run, so a new token reaches the receiver.
+# Held jobs (wait_seconds, quiet_seconds) and release came in together: an
+# older server would take the fold's and portal edits' specs but run them at once.
+openapi="$(curl -fsS "$corral_url/openapi.json")" || die "corral's server doesn't answer at $corral_url"
+grep -qF '/jobs/{job_id}/release' <<<"$openapi" \
+    || die "corral's server at $corral_url has no held jobs. Upgrade corral from the infra repo, then re-run."
+# Rewritten every run, so a new token reaches the receiver, the portal and the check.
 (umask 077; printf 'CORRAL_URL=%s\nCORRAL_TOKEN=%s\n' "$corral_url" "$corral_token" > "$NAS_CORRAL_ENV")
 mkdir -p "$NAS_CORRAL_DIR/kinds.d"
 # Blocking flock, so a reprocess run by hand delays the job instead of failing
-# it. systemd-cat keeps its output under journalctl -t hearsay-reprocess.
+# it. The check takes reprocess's own lock inside its container (hearsay/check.py).
+# systemd-cat keeps their output under journalctl -t hearsay-reprocess and -t hearsay-check.
 if write_if_changed "$NAS_CORRAL_DIR/kinds.d/hearsay.toml" <<EOF
 # Written by hearsay's install/nas.sh on every run.
 [kinds."hearsay.reprocess"]
 argv = ["systemd-cat", "-t", "hearsay-reprocess", "flock", "/run/hearsay-reprocess.lock",
         "docker", "compose", "-f", "$REPO_DIR/install/compose.yaml", "run", "--rm", "-T", "reprocess"]
+
+[kinds."hearsay.check"]
+argv = ["systemd-cat", "-t", "hearsay-check",
+        "docker", "compose", "-f", "$REPO_DIR/install/compose.yaml", "run", "--rm", "-T", "ended"]
 EOF
 then
     systemctl restart corral-worker
@@ -523,37 +533,48 @@ say "Reprocessing now"
 # journalctl -t hearsay-reprocess
 flock /run/hearsay-reprocess.lock "${COMPOSE[@]}" run --rm -T reprocess </dev/null
 
-say "Hourly enqueue (TrueNAS cron job)"
-# Uploads enqueue the pipeline themselves; this catches any that couldn't
-# reach corral. The chain's keys coalesce, so it never doubles up. Registered
-# through midclt so it shows in the TrueNAS UI (System -> Advanced -> Cron
-# Jobs) and survives updates. Output goes to the journal, not a file on either
+say "Hourly check and nightly pipeline (TrueNAS cron jobs)"
+# Uploads enqueue a check themselves (hearsay/check.py); the hourly one
+# catches any that couldn't reach corral, and a recording stopped soon after
+# its last speech. The nightly pipeline does what's due by time alone (a hold
+# ending, sealing, retention), with nothing recorded or edited, and transcribes
+# anything a check missed. Keys coalesce, so neither doubles up. Registered
+# through midclt so they show in the TrueNAS UI (System -> Advanced -> Cron
+# Jobs) and survive updates. Output goes to the journal, not a file on either
 # pool. The middleware appends its own "> /dev/null 2> /dev/null" to the
 # command, so the pipe sits inside an outer subshell.
-ENQUEUE_CMD="( docker exec hearsay-capture python -m hearsay.enqueue 2>&1 | logger -t hearsay-enqueue )"
-cron_payload="$(python3 -c '
+# Takes the description, minute and hour, and what to enqueue (hearsay/enqueue.py).
+cron_job() {
+    local description="$1" minute="$2" hour="$3" what="$4" payload id
+    payload="$(python3 -c '
 import json, sys
-print(json.dumps({"user": "root", "command": sys.argv[1], "description": "hearsay enqueue",
-                  "schedule": {"minute": "30", "hour": "*", "dom": "*", "month": "*", "dow": "*"},
-                  "enabled": True, "stdout": True, "stderr": True}))' "$ENQUEUE_CMD")"
+description, minute, hour, command = sys.argv[1:]
+print(json.dumps({"user": "root", "command": command, "description": description,
+                  "schedule": {"minute": minute, "hour": hour, "dom": "*", "month": "*", "dow": "*"},
+                  "enabled": True, "stdout": True, "stderr": True}))' "$description" "$minute" "$hour" \
+        "( docker exec hearsay-capture python -m hearsay.enqueue $what 2>&1 | logger -t hearsay-enqueue )")"
+    id="$(midclt call cronjob.query "[[\"description\", \"=\", \"$description\"]]" \
+        | python3 -c 'import json, sys; jobs = json.load(sys.stdin); print(jobs[0]["id"] if jobs else "")')"
+    if [ -z "$id" ]; then
+        midclt call cronjob.create "$payload" >/dev/null
+        echo "created: $description, enqueues $what (cron minute $minute, hour $hour)"
+    else
+        midclt call cronjob.update "$id" "$payload" >/dev/null
+        echo "up to date: $description, enqueues $what (cron minute $minute, hour $hour; job $id)"
+    fi
+}
 # For the switch to corral (the NAS): corral's worker runs reprocess now, so
 # the hourly reprocess cron job goes. Delete this once nas.sh has run with
 # corral up.
 cron_id="$(midclt call cronjob.query '[["description", "=", "hearsay reprocess"]]' \
     | python3 -c 'import json, sys; jobs = json.load(sys.stdin); print(jobs[0]["id"] if jobs else "")')"
 [ -z "$cron_id" ] || { midclt call cronjob.delete "$cron_id" >/dev/null; echo "removed: hourly reprocess"; }
-enqueue_id="$(midclt call cronjob.query '[["description", "=", "hearsay enqueue"]]' \
-    | python3 -c 'import json, sys; jobs = json.load(sys.stdin); print(jobs[0]["id"] if jobs else "")')"
-if [ -z "$enqueue_id" ]; then
-    midclt call cronjob.create "$cron_payload" >/dev/null
-    echo "created: hourly enqueue at :30"
-else
-    midclt call cronjob.update "$enqueue_id" "$cron_payload" >/dev/null
-    echo "up to date: hourly enqueue at :30 (job $enqueue_id)"
-fi
-docker exec hearsay-capture python -m hearsay.enqueue \
+cron_job "hearsay enqueue" 30 "*" check
+# Before the audio datasets' snapshots at 04:00, so they don't keep what retention deletes.
+cron_job "hearsay nightly" 0 3 chain
+docker exec hearsay-capture python -m hearsay.enqueue check \
     || die "the capture container can't enqueue on corral at $corral_url"
-echo "logs: journalctl -t hearsay-enqueue, journalctl -t hearsay-reprocess"
+echo "logs: journalctl -t hearsay-enqueue, journalctl -t hearsay-check, journalctl -t hearsay-reprocess"
 
 say "Verifying uploads land in $NAS_RAW"
 # Manual: only the operator's phone (or Mac) can send a real upload.

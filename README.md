@@ -41,7 +41,7 @@ flowchart LR
   M[Mac recorder<br/>Swift, mic + call channels] --> R
   I -- tailnet --> R[Capture receiver<br/>FastAPI on the NAS]
   R --> RAW[(Raw payloads<br/>verbatim, never modified)]
-  RAW --> RP[Hourly reprocess<br/>parse, assemble audio,<br/>find conversations by VAD]
+  RAW --> RP[Reprocess once a<br/>conversation ends<br/>parse, assemble audio,<br/>find conversations by VAD]
   RP --> GPU[GPU box<br/>Parakeet transcription,<br/>pyannote diarization]
   GPU --> SP[Speaker attribution<br/>owner voice, channels]
   PORTAL[Portal: undecided turns<br/>phone or browser] --> SP
@@ -55,9 +55,9 @@ flowchart LR
   against segments I've labeled by ear. Disagreements get re-heard blind, and a report shows
   precision at each threshold. A turn that can't be called stays unlabeled rather than guessed.
 - **Everything rebuilds from raw.** Uploads are written to disk byte for byte before any parsing.
-  Every hour the whole database is rebuilt from them in memory, then the live one is updated in one
-  transaction that writes only the rows that changed, so a quiet hour writes almost nothing. Slow
-  steps are cached by audio content.
+  Each time a conversation ends, and nightly, the whole database is rebuilt from them in memory, then
+  the live one is updated in one transaction that writes only the rows that changed, so a run with
+  nothing new writes almost nothing. Slow steps are cached by audio content.
 - **A real contract for consumers.** The stream has a format version and atomic writes. Each file
   carries a content-hash revision so a reader can detect a race. A separate transcript revision says
   when utterance ids get renumbered, and there's an append-only forget list. Corrections apply

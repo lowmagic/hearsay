@@ -86,6 +86,7 @@ def log_in(client):
     ("POST", "/release", {"conversation_id": "c1"}, "/login"),
     ("POST", "/places", {"action": "name", "name": "Back Room", "latitude": "-26.12", "longitude": "80.14"}, "/login"),
     ("POST", "/words", {"action": "save", "words": "Xanthe"}, "/login"),
+    ("POST", "/apply", {"back": "/"}, "/login"),
 ])
 def test_nothing_is_reachable_or_written_without_logging_in(portal, method, path, form, refused):
     client, _, labels_dir = portal
@@ -718,3 +719,93 @@ def test_words_wait_in_a_draft_and_update_commits_them_with_lattice_s_all_at_onc
     vocab.write_text(json.dumps({"format_version": 2, "terms": []}))
     client.post("/words", data={"action": "save", "words": "Xanthe"})
     assert "name='seen'" not in client.get("/words").text
+
+
+@pytest.fixture
+def corral(portal, tmp_path, monkeypatch):
+    """The portal set up with corral, whose calls are recorded instead of made: post answers job 7."""
+    from hearsay import enqueue
+
+    _, db_path, labels_dir = portal
+    calls = []
+    monkeypatch.setattr(enqueue, "post", lambda url, token, spec: calls.append(("post", spec)) or (7, True))
+    monkeypatch.setattr(enqueue, "release", lambda url, token, job_id: calls.append(("release", job_id)))
+    client = TestClient(create_app(db_path, tmp_path / "audio", labels_dir, labels_dir / "stream", "me", "correct horse",
+                                   "k" * 64, corral_url="http://corral.test", corral_token="corral-token"))
+    return client, labels_dir, calls
+
+
+def test_each_edit_enqueues_one_reprocess_to_apply_it(corral):
+    from hearsay.enqueue import APPLY
+
+    client, labels_dir, calls = corral
+    log_in(client)
+    script = {"X-Requested-With": "fetch"}
+    assert client.post("/turn", data={"turn_id": "a0", "category": "_media"}, headers=script).status_code == 204
+    assert calls == [("post", APPLY)]
+    # A move writes a record per spot, and is still one edit.
+    client.post("/places", data={"action": "move", "from": "Back Room", "at": ["-26.13,80.15", "-26.125,80.145"]})
+    assert len((labels_dir / "places.jsonl").read_text().splitlines()) == 3 and len(calls) == 2
+    # Nothing written, nothing to apply.
+    client.post("/places", data={"action": "name", "name": "Back Room"})
+    client.post("/turn", data={"turn_id": "a0", "category": "Alice"})
+    assert len(calls) == 2
+
+
+def test_a_words_update_enqueues_the_whole_pipeline(portal, tmp_path, monkeypatch):
+    from hearsay import enqueue
+
+    _, db_path, labels_dir = portal
+    calls = []
+    monkeypatch.setattr(enqueue, "post", lambda url, token, spec: calls.append(spec) or (7, True))
+    vocab = tmp_path / "vocab.json"
+    vocab.write_text(json.dumps({"format_version": 1, "terms": [{"term": "gnomon", "source": "repair"}]}))
+    client = TestClient(create_app(db_path, tmp_path / "audio", labels_dir, labels_dir / "stream", "me", "correct horse",
+                                   "k" * 64, vocab_path=vocab, corral_url="http://corral.test", corral_token="t"))
+    log_in(client)
+    client.post("/words", data={"action": "save", "words": "Xanthe"})
+    assert calls == []  # a draft changes nothing yet
+    seen = client.get("/words").text.split("name='seen' value='")[1].split("'")[0]
+    client.post("/words", data={"action": "update", "seen": seen})
+    # Words change transcription, which a reprocess alone (APPLY) doesn't redo.
+    assert calls == [enqueue.CHAIN]
+
+
+def test_an_edit_is_kept_when_corral_cant_be_reached(corral, monkeypatch, caplog):
+    import urllib.error
+
+    from hearsay import enqueue
+
+    client, labels_dir, _ = corral
+    log_in(client)
+
+    def refused(url, token, spec):
+        raise urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
+
+    monkeypatch.setattr(enqueue, "post", refused)
+    response = client.post("/turn", data={"turn_id": "a0", "category": "_media"}, headers={"X-Requested-With": "fetch"})
+    assert response.status_code == 204 and "_media" in (labels_dir / "tags.jsonl").read_text()
+    assert "couldn't enqueue on corral" in caplog.text
+    # Apply now says it didn't, and that the edits are kept.
+    response = client.post("/apply", data={"back": "/"}, follow_redirects=False)
+    assert response.status_code == 502 and "Your edits are saved" in response.text
+
+
+def test_apply_now_releases_the_reprocess_it_enqueues(portal, corral):
+    from hearsay.enqueue import APPLY
+
+    client, _, calls = corral
+    assert client.post("/apply", data={"back": "/"}, headers={"X-Requested-With": "fetch"}).status_code == 401
+    assert client.post("/apply", data={"back": "/"}, follow_redirects=False).headers["location"] == "/login"
+    assert calls == []
+    log_in(client)
+
+    assert "action='/apply'" in client.get("/").text and "name='back' value='/places'" in client.get("/places").text
+    response = client.post("/apply", data={"back": "/places"}, follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/places"
+    assert calls == [("post", APPLY), ("release", 7)]
+    assert client.post("/apply", data={"back": "/"}, headers={"X-Requested-With": "fetch"}).status_code == 204
+    # Without corral (local dev) there's no Apply now to offer.
+    plain, _, _ = portal
+    log_in(plain)
+    assert "action='/apply'" not in plain.get("/").text

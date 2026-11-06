@@ -3,8 +3,9 @@ audio, turns, speaker labels, and the utterance stream.
 
 Turns come from transcripts the dev box makes of each WAV (hearsay/transcribe.py),
 so new audio takes a reprocess, a transcription run, then another reprocess.
-On the NAS corral's worker runs it when an upload enqueues the pipeline, and
-an hourly enqueue (install/nas.sh) catches uploads that couldn't.
+On the NAS corral's worker runs it once a conversation has ended
+(hearsay/check.py), when a portal edit has settled, and nightly
+(hearsay/enqueue.py says when each is enqueued).
 
 Every run builds a complete new database from raw in a scratch directory
 (a tmpfs in the container), then brings the real one up to date in a single
@@ -87,6 +88,18 @@ def lock(db_path: Path):
         yield
 
 
+def find(env: dict[str, Path], staging: Path, records_dir: Path | None, imports: set[str], cache: Cache) -> None:
+    """The steps from a rebuilt database to its conversations: sealed ones
+    from their records, the audio decoded and placed, and voice detection.
+    Also how hearsay/check.py sees which conversations have ended."""
+    report("Sealed conversations, from their records:", restore(staging, records_dir))
+    # Decoded once and cached; the cache is pruned in run, once this database is in place.
+    report(f"Imported audio from {env['imports_dir']}:",
+           load_imports(env["imports_dir"], staging, imports_pcm(env), imports))
+    report("Audio from the recorder:", load_captures(env["raw_dir"], staging, capture_pcm(env)))
+    report("Conversations found in the audio stream:", find_conversations(env["raw_dir"], staging, cache))
+
+
 def build(env: dict[str, Path], staging: Path, staged_audio: Path, records_dir: Path | None,
           unseal_late: bool = False) -> None:
     """Build a complete database at staging, and the WAVs that changed at
@@ -105,12 +118,7 @@ def build(env: dict[str, Path], staging: Path, staged_audio: Path, records_dir: 
                 report("Arrived late at the seal line; unsealed:", unseal(records_dir, when))
                 sealed, imports = sealed_payloads(records_dir)
                 report(f"Rebuilt from {env['raw_dir']}:", rebuild(env["raw_dir"], staging, sealed))
-        report("Sealed conversations, from their records:", restore(staging, records_dir))
-        # Decoded once and cached; the cache is pruned in run, once this database is in place.
-        report(f"Imported audio from {env['imports_dir']}:",
-               load_imports(env["imports_dir"], staging, imports_pcm(env), imports))
-        report("Audio from the recorder:", load_captures(env["raw_dir"], staging, capture_pcm(env)))
-        report("Conversations found in the audio stream:", find_conversations(env["raw_dir"], staging, cache))
+        find(env, staging, records_dir, imports, cache)
         report("Where conversations happened:", find_places(staging, env["labels_dir"]))
         report(f"Assembled conversation audio in {staged_audio}:",
                assemble(env["raw_dir"], staging, env["audio_dir"], staged_audio))

@@ -41,6 +41,7 @@ import tempfile
 import wave
 from pathlib import Path
 
+from hearsay.conversations import STOPPED
 from hearsay.words import boosted
 
 NAS = "nas"
@@ -112,9 +113,14 @@ def settings_for(words: list[str]) -> dict:
 
 
 def pending(settings: dict) -> list[dict]:
-    """Conversations without a transcript or failure marker for their current WAV and settings, oldest first."""
+    """Conversations that have ended (hearsay/conversations.py) without a transcript or failure marker for their
+    current WAV and settings, oldest first. One still going on grows with every upload, so it's transcribed once,
+    after it ends, not again with each new WAV; one whose recording stopped counts as ended once STOPPED has passed."""
     sql = ("SELECT conversation_id, wav_file, wav_sha256, duration FROM conversation_audio"
-           " WHERE wav_file IS NOT NULL AND wav_sha256 IS NOT NULL AND NOT sealed ORDER BY conversation_id")
+           " JOIN conversations USING (conversation_id)"
+           " WHERE wav_file IS NOT NULL AND wav_sha256 IS NOT NULL AND NOT sealed"
+           f" AND (NOT open OR end < unixepoch() - {STOPPED:.0f})"
+           " ORDER BY conversation_id")
     rows = json.loads(ssh(["sqlite3", "-json", DB, f'"{sql}"']) or b"[]")
     done, failed = json.loads(ssh(["python3", "-", TRANSCRIPTS_DIR, FAILED_DIR], EXISTING_SCRIPT.encode()))
     return [r for r in rows
