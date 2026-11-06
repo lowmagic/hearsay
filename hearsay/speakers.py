@@ -50,8 +50,9 @@ ENROLLMENT_PIECE = 3.0
 # 2026-11-06 (152 labels, about 55 drawn between 0.30 and 0.40): owner at
 # 0.30 is 0.99 precise (the miss a turn mostly someone else's, merged with
 # the owner's "um") and finds 0.95 of the owner's turns, against 0.47 at
-# 0.40. Not-owner at 0.14 is 1.00 precise and finds 0.79, from only 39
-# not-owner labels; it waits for more.
+# 0.40. Not-owner stays at 0.14, measured on 58 not-owner labels after
+# labeling about 40 turns between 0.14 and 0.30: the owner is already 3 of
+# 14 turns just above it (to 0.18), so raising it costs the owner's words.
 OWNER_THRESHOLD = 0.30
 NOT_OWNER_THRESHOLD = 0.14
 # Share of a diarized speaker's voice-labeled seconds that must carry one
