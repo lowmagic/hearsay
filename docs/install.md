@@ -119,6 +119,15 @@ tap defaults to keep, double tap to pause. Holding the button 3 s turns the
 pendant off. The NAS must be updated before the
 app whenever the upload format changes, as the update order above does.
 
+While recording, location fixes back off once the phone settles at a stay.
+Its five-minute heartbeats carry the anchor fix's reported accuracy separately
+from the geofence radius; older captures have only the radius, so reprocessing
+cannot recover their original fix accuracy. Leaving needs two fixes at least a
+minute apart, each accurate to 20 m or better and farther from the anchor than
+the two fixes' combined uncertainty. Motion or a geofence exit only asks for a
+check; poor indoor fixes don't end the stay. Sustained-motion checks back off
+from five minutes to thirty minutes; this rule doesn't add continuous GPS.
+
 ## Recording on the Mac
 
 The menu-bar recorder (`mac/`, installed by `install/mac.sh`) records the

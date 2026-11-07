@@ -76,17 +76,17 @@ final class MovementTests: XCTestCase {
     func testAFixFarAwayIsAnOutlierUntilASecondAgrees() {
         var s = Session.settledAtHome()
         _ = s.take()
-        XCTAssertEqual(s.movement.fix(fix(200, 400, accuracy: 30)), [])  // drift, or a jump
+        XCTAssertEqual(s.movement.fix(fix(200, 400)), [])  // drift, or a jump
         XCTAssertEqual(s.movement.state, .stationary)
         s.run(until: 260)
         XCTAssertEqual(s.take(), [.requestFix(precise: true)])  // confirms it
         XCTAssertEqual(s.movement.fix(fix(261, 5)), [])  // home after all
         XCTAssertEqual(s.movement.state, .stationary)
 
-        XCTAssertEqual(s.movement.fix(fix(300, 400, accuracy: 30)), [])
+        XCTAssertEqual(s.movement.fix(fix(300, 400)), [])
         s.run(until: 360)
         _ = s.take()
-        let effects = s.movement.fix(fix(361, 420, accuracy: 30))
+        let effects = s.movement.fix(fix(361, 420))
         XCTAssertEqual(s.movement.state, .uncertain)
         XCTAssertEqual(effects.first, .unwatch)
     }
@@ -101,7 +101,7 @@ final class MovementTests: XCTestCase {
         XCTAssertEqual(s.movement.state, .stationary)
     }
 
-    func testWalkingAwayDepartsOnOneGoodFix() {
+    func testWalkingFiftyMetresAwayNeedsTwoGoodFixesAMinuteApart() {
         var s = Session.settledAtHome()
         _ = s.take()
         _ = s.movement.activity(.walking, .high, at: 200)
@@ -109,29 +109,69 @@ final class MovementTests: XCTestCase {
         XCTAssertEqual(s.asked, 0)  // walking around the house isn't leaving yet
         s.run(until: 260)
         XCTAssertEqual(s.take(), [.requestFix(precise: true)])
-        let effects = s.movement.fix(fix(270, 300))
+        XCTAssertEqual(s.movement.fix(fix(270, 50)), [])
+        XCTAssertEqual(s.movement.fix(fix(300, 55)), [])  // too soon to confirm
+        XCTAssertEqual(s.movement.state, .stationary)
+        s.run(until: 330)
+        XCTAssertEqual(s.take(), [.requestFix(precise: true)])
+        let effects = s.movement.fix(fix(335, 55))
         XCTAssertEqual(effects, [.unwatch, .record(.walking, confidence: 0.9, reason: .departed, anchor: nil)])
     }
 
-    func testWalkingAwayOnAPoorFixWaitsForASecond() {
+    func testPoorIndoorFixesNeverDepartOrAskForConfirmationEvenWhileWalking() {
         var s = Session.settledAtHome()
         _ = s.take()
         _ = s.movement.activity(.walking, .high, at: 200)
         s.run(until: 260)
         _ = s.take()
-        XCTAssertEqual(s.movement.fix(fix(270, 400, accuracy: 150)), [])  // could be a fix gone astray
+        XCTAssertEqual(s.movement.fix(fix(270, 400, accuracy: 150)), [])
         s.run(until: 330)
-        XCTAssertEqual(s.take(), [.requestFix(precise: true)])
-        let effects = s.movement.fix(fix(335, 500, accuracy: 150))
-        XCTAssertEqual(effects, [.unwatch, .record(.walking, confidence: 0.9, reason: .departed, anchor: nil)])
+        XCTAssertEqual(s.asked, 0)
+        XCTAssertEqual(s.movement.fix(fix(335, 500, accuracy: 150)), [])
+        XCTAssertEqual(s.movement.state, .stationary)
     }
 
-    func testLeavingTheGeofenceDepartsOnOneGoodFix() {
+    func testAGeofenceExitStillNeedsTwoGoodFixes() {
         var s = Session.settledAtHome()
         _ = s.take()
         XCTAssertEqual(s.movement.leftAnchor(at: 200), [.requestFix(precise: true)])
-        let effects = s.movement.fix(fix(210, 300))  // before Core Motion notices
+        XCTAssertEqual(s.movement.fix(fix(210, 300)), [])  // before Core Motion notices
+        XCTAssertEqual(s.movement.state, .stationary)
+        let effects = s.movement.fix(fix(270, 320))
         XCTAssertEqual(effects, [.unwatch, .record(.uncertain, confidence: 0.2, reason: .departed, anchor: nil)])
+    }
+
+    func testTheAnchorKeepsTheSharpestFixAndHeartbeatsKeepItsAccuracy() throws {
+        var s = Session()
+        _ = s.movement.recording(true, at: 0)
+        _ = s.movement.activity(.stationary, .high, at: 0)
+        _ = s.movement.fix(fix(5, 0, accuracy: 80))
+        _ = s.movement.fix(fix(130, 20, accuracy: 8))
+        let anchor = try XCTUnwrap(s.movement.anchor)
+        XCTAssertEqual(anchor.latitude, north(20))
+        XCTAssertEqual(anchor.accuracy, 8)
+        XCTAssertEqual(anchor.radius, 120)
+        s.run(until: 430)
+        XCTAssertTrue(s.take().contains(.record(.stationary, confidence: 0.9, reason: .heartbeat, anchor: anchor)))
+    }
+
+    func testDepartureUsesBothFixErrorsAndAnUncertainFixRestartsConfirmation() {
+        for accuracy in [21.0, 900.0] {
+            var s = Session()
+            _ = s.movement.recording(true, at: 0)
+            _ = s.movement.fix(fix(5, 0, accuracy: 80))
+            _ = s.movement.fix(fix(130, 0, accuracy: 80))
+            _ = s.movement.fix(fix(200, 90))
+            _ = s.movement.fix(fix(260, 95))
+            XCTAssertEqual(s.movement.state, .stationary)  // within 80 + 20 m uncertainty
+            _ = s.movement.fix(fix(300, 110))
+            _ = s.movement.fix(fix(350, 120, accuracy: accuracy))
+            _ = s.movement.fix(fix(420, 120))
+            XCTAssertEqual(s.movement.state, .stationary)  // not a confirmation of the 300 s fix
+            _ = s.movement.fix(fix(480, 125))
+            XCTAssertEqual(s.movement.state, .uncertain)
+            XCTAssertNil(s.movement.anchor)
+        }
     }
 
     func testWalkingAroundAtHomeChecksLessAndLessOften() {

@@ -43,7 +43,7 @@ RADIUS = 100.0
 # The radii the operator can set: about a shop to a festival ground.
 MIN_RADIUS, MAX_RADIUS = 25.0, 2000.0
 # Readings less accurate than this (metres, as iOS reports it) say too little
-# to place anyone. A stay's readings carry its anchor's radius, at most 300.
+# to place anyone. Older stay records have only their geofence radius.
 MAX_ACCURACY = 300.0
 # The last reading this long before a conversation starts still says where it
 # began: the phone reads about every 5 minutes, a fix can take most of a

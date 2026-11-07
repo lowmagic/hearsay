@@ -39,9 +39,12 @@ sequence of records, little-endian:
                 4 cycling, 5 driving), confidence u8 percent, reason u8
                 (0 heartbeat, 1 started, 2 stopped, 3 settled, 4 departed,
                 5 activity, 6 resumed), then while stationary the anchor:
-                latitude f64, longitude f64, radius f32 in metres. Written on
-                every change and every 5 minutes while stationary, when the
-                app takes no fixes
+                latitude f64, longitude f64, geofence radius f32 and the
+                anchor fix's reported accuracy f32, both in metres (27 bytes
+                including the state header). Older stationary records have
+                no final accuracy (23 bytes); only their radius is known.
+                Written on every change and every 5 minutes while stationary,
+                when the app takes no fixes
 
 An audio notification is [index u16 LE][sub u8][Opus bytes]. index counts
 notifications and wraps at 65535; sub 0 starts a frame, and a frame split
@@ -96,6 +99,7 @@ from hearsay.assemble import SAMPLE_RATE
 CONNECTED, AUDIO, BUTTON, STORED, ACTION, MIC, SYSTEM, LOCATION, ACTIVITY, ROUTE, MOVEMENT = range(1, 12)
 LOCATION_FIX = struct.Struct("<ddf")
 MOVEMENT_HEADER = struct.Struct("<BBB")
+MOVEMENT_ANCHOR = struct.Struct("<ddff")
 STATIONARY = 2
 MAC_FRAME = struct.Struct("<H")
 RECORD_HEADER = struct.Struct("<dBH")
@@ -186,15 +190,20 @@ def locations(records: list[tuple[float, int, bytes]]) -> list[tuple[float, floa
     """(at, latitude, longitude, accuracy in metres) for each location reading in one upload.
 
     A fix is a reading, and so is each MOVEMENT record of the owner staying
-    put, at its anchor with the anchor's radius as accuracy: settled, the app
-    takes no fixes, and these say where it still is.
+    put, at its anchor with the anchor fix's accuracy. Older records carry
+    only the geofence radius, which remains their uncertainty: the original
+    fix's accuracy cannot be recovered from it.
     """
     found = []
     for at, kind, data in records:
         if kind == LOCATION:
             found.append((at, *LOCATION_FIX.unpack(data)))
         elif kind == MOVEMENT and data[0] == STATIONARY:
-            found.append((at, *LOCATION_FIX.unpack_from(data, MOVEMENT_HEADER.size)))
+            if len(data) == MOVEMENT_HEADER.size + LOCATION_FIX.size:
+                found.append((at, *LOCATION_FIX.unpack_from(data, MOVEMENT_HEADER.size)))
+            else:
+                lat, lon, _, accuracy = MOVEMENT_ANCHOR.unpack_from(data, MOVEMENT_HEADER.size)
+                found.append((at, lat, lon, accuracy))
     return found
 
 
