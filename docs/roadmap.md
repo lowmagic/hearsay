@@ -702,6 +702,13 @@ the owner's only by their speaker whose own voice is closer to the owner's
 than the not-owner threshold (158 of 3,750). Check between fills in a
 stretch.
 
+Changed 2026-11-07, from the operator's use: a release takes effect 5
+minutes after it's pressed, and until then its button is Cancel release.
+One pressed by mistake reached Idea Machine 22 seconds later, because a
+reprocess already running read it; now a reprocess counts only releases
+already due, and each release enqueues one held until it is. Release asks
+on a page of its own: the browser's confirm dialog it used didn't come up.
+
 ## 21. TV and other media, per turn
 
 TV and video dialogue is most of what reaches the stream that isn't anyone

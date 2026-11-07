@@ -171,7 +171,8 @@ stream.
 ## The hold
 
 A conversation enters the stream two weeks after it ends, or sooner when the operator releases it (only one that has
-ended can be): until then it isn't in the index at all, nor its file, taps or places. That's additive, so
+ended can be; a release takes effect 5 minutes after it's made, and they can cancel it until then): until then it isn't
+in the index at all, nor its file, taps or places. That's additive, so
 `format_version` stays 1, but captures, self-notes too, arrive up to two weeks late. Once in, a conversation stays: the
 stream never withdraws a conversation it has published, so whatever was in it before the hold began stays too, and a
 conversation that takes in speech already published (late audio gives it a new id) isn't held either. Only

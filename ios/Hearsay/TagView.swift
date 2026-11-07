@@ -126,9 +126,9 @@ private struct PortalView: UIViewRepresentable {
             open(webView)
         }
 
-        /// The portal asks before releasing a conversation or throwing a whole
-        /// one out. Without this a web view answers every confirm() with
-        /// Cancel, so those buttons did nothing.
+        /// The portal asks before throwing a whole conversation out. Without
+        /// this a web view answers every confirm() with Cancel, so that button
+        /// did nothing.
         func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
                      initiatedByFrame frame: WKFrameInfo) async -> Bool {
             guard var presenter = webView.window?.rootViewController else { return false }
