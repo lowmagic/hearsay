@@ -30,7 +30,9 @@ its transcript in order: every turn with when, where and who the stream
 says said it (or why it's left out), and the conversation's audio, which
 plays from any turn on. Each says whether it's in the stream yet, read from
 the stream's index, or held, and until when (hearsay/hold.py); the operator
-can release an ended one early (labels/release.jsonl). A day's page reads
+can release an ended one early (labels/release.jsonl), after saying so on a
+page that asks. A release takes effect 5 minutes after it's made, and until
+then the button is Cancel release. A day's page reads
 its conversations through in order, with the quiet between them, each just
 as on its own page. It reads what the last reprocess wrote; the
 transcript is the first part of roadmap slice 20.
@@ -47,10 +49,11 @@ The Words page edits the words transcription is nudged toward
 commits it with Lattice's approved terms all at once.
 
 Each edit a reprocess applies (a tag, a mark thrown out or taken back, a
-release, a place) enqueues one on corral once the response is sent
+place) enqueues one on corral once the response is sent
 (hearsay/enqueue.py APPLY): it runs once the edits have been quiet 10
 minutes, so a session of tagging is one run, and Apply now starts it as soon
-as the NAS is free. If corral can't be reached, the nightly pipeline applies
+as the NAS is free. A release enqueues its own, for when it's due
+(hearsay/enqueue.py after_release). If corral can't be reached, the nightly pipeline applies
 them instead. A Words Update enqueues the whole pipeline (hearsay/enqueue.py
 CHAIN): it changes transcription, which a reprocess alone doesn't redo.
 """
@@ -79,7 +82,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 
 from hearsay import enqueue
 from hearsay.forget import read_marks
-from hearsay.hold import HOLD, held, read_releases
+from hearsay.hold import DELAY, HOLD, due, held, read_releases
 from hearsay.media import HINT
 from hearsay.places import (
     LOOKBACK,
@@ -260,9 +263,7 @@ document.addEventListener('click', event => {
   } else boxes.forEach(box => { if (box.closest('li').dataset.pick === button.value) box.checked = true; });
 });
 document.addEventListener('submit', event => {
-  const ask = {whole: 'Throw out this whole conversation?',
-               release: 'Release this conversation? Idea Machine gets it at the next reprocess.'}[event.submitter?.value];
-  if (ask && !confirm(ask)) event.preventDefault();
+  if (event.submitter?.value === 'whole' && !confirm('Throw out this whole conversation?')) event.preventDefault();
 });
 document.querySelectorAll('section audio').forEach(player => {
   const turns = [...player.closest('section').querySelectorAll('li[data-start]')];
@@ -514,14 +515,18 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Pat
         return [row for row in rows if not any(
             m["start"] < row["at"] + row["end"] - row["start"] and row["at"] < m["end"] for m in marks)]
 
-    def hold_status(start: float, end: float, is_open: bool, sent: set[str], conversation_id: str) -> tuple[str, bool]:
-        """Whether Idea Machine can see a conversation, in words, and whether it can be released now."""
+    def hold_status(start: float, end: float, is_open: bool, sent: set[str], conversation_id: str) -> tuple[str, str]:
+        """Whether Idea Machine can see a conversation, in words, and what can be done
+        about it now: "release", "cancel" (a release not yet due) or ""."""
         if conversation_id in sent:
-            return "in the stream", False
+            return "in the stream", ""
+        now = time.time()
         releases = read_releases(labels_dir)
-        if not held(start, end, releases, time.time()):
-            return ("released" if end + HOLD > time.time() else "two weeks up") + ": out at the next reprocess", False
-        return f"held until {local(end + HOLD):%a %b %-d}", not is_open
+        if pending := [r for r in releases if r["start"] <= start and end <= r["end"] and r["due"] > now]:
+            return f"released, goes at {local(pending[0]['due']):%H:%M} unless you cancel", "cancel"
+        if not held(start, end, due(releases, now), now):
+            return ("released" if end + HOLD > now else "two weeks up") + ": out at the next reprocess", ""
+        return f"held until {local(end + HOLD):%a %b %-d}", "" if is_open else "release"
 
     def append_tag(record: dict, path: Path = tags_path) -> None:
         record["tagged_at"] = datetime.now(timezone.utc).isoformat()
@@ -806,12 +811,15 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
                   "<p class='muted'>No audio.</p>")
         names = list(dict.fromkeys(name for name, _, _ in here))
         facts = [f"{(end - start) / 60:.0f} min", *names, f"{len(turns)} turn(s)"] + (["still going"] if is_open else [])
-        status, releasable = hold_status(start, end, is_open, sent, conversation_id)
+        status, action = hold_status(start, end, is_open, sent, conversation_id)
         hidden = (f"<input type='hidden' name='conversation_id' value='{html.escape(conversation_id)}'>"
                   f"<input type='hidden' name='back' value='{html.escape(back)}'>")
-        release = (f"<form class='release' method='post' action='/release'>{hidden}"
-                   "<button type='submit' name='action' value='release'>Release to Idea Machine now</button></form>"
-                   if releasable else "")
+        release = {
+            "release": f"<form class='release' method='get' action='/release'>{hidden}"
+                       "<button type='submit'>Release to Idea Machine</button></form>",
+            "cancel": f"<form class='release' method='post' action='/release/undo'>{hidden}"
+                      "<button type='submit'>Cancel release</button></form>",
+        }.get(action, "")
         return f"""<section id="{html.escape(conversation_id)}">
 <h2><a href="/conversations/{quote(conversation_id)}">{local(start):%a %b %-d %H:%M}</a></h2>
 <p class="muted">{html.escape(' · '.join(facts))}. Idea Machine: {html.escape(status)}.</p>
@@ -898,13 +906,16 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
 <p class="nav">{nav}</p>
 <script>{TRANSCRIPT_SCRIPT}</script>""")
 
-    def go_back(form: dict[str, list[str]]) -> Response:
-        """To the page the form was on: a conversation's, its day's, or another."""
+    def back_to(form: dict[str, list[str]]) -> str:
+        """The page the form was on: a conversation's, its day's, or another; never another site."""
         back = form.get("back", [""])[0]
         if not back.startswith("/") or back.startswith("//"):
             conversation_id = form.get("conversation_id", [""])[0]
             back = f"/conversations/{quote(conversation_id)}" if conversation_id else "/"
-        return RedirectResponse(back, status_code=303)
+        return back
+
+    def go_back(form: dict[str, list[str]]) -> Response:
+        return RedirectResponse(back_to(form), status_code=303)
 
     @app.post("/forget")
     async def throw_out(request: Request, background: BackgroundTasks) -> Response:
@@ -952,9 +963,39 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
                 apply_later(background)
         return go_back(form)
 
+    @app.get("/release")
+    async def ask_release(request: Request) -> Response:
+        """Ask before releasing, on a page of its own rather than in a dialog, which
+        a browser or web view can skip without asking (one did on 2026-11-07)."""
+        if not logged_in(request):
+            return RedirectResponse("/login", status_code=303)
+        form = parse_qs(request.url.query)
+        conversation_id = form.get("conversation_id", [""])[0]
+        db = connect()
+        try:
+            conversation = db.execute("SELECT start, end, open FROM conversations WHERE conversation_id = ?",
+                                      (conversation_id,)).fetchone()
+        finally:
+            db.close()
+        if not conversation or hold_status(*conversation, published(stream_dir), conversation_id)[1] != "release":
+            return go_back(form)
+        start, end, _ = conversation
+        back = html.escape(back_to(form))
+        return page("Release to Idea Machine?", f"""
+<h1>Release to Idea Machine?</h1>
+<p>The conversation of {local(start):%a %b %-d %H:%M}–{local(end):%H:%M} goes into the stream
+{DELAY // 60} minutes after you release it. Until then you can cancel on its page; after that it can only be
+thrown out.</p>
+<form method="post" action="/release">
+<input type="hidden" name="conversation_id" value="{html.escape(conversation_id)}">
+<input type="hidden" name="back" value="{back}">
+<button type="submit">Release</button>
+</form>
+<p><a href="{back}">Keep it held</a></p>""")
+
     @app.post("/release")
     async def release(request: Request, background: BackgroundTasks) -> Response:
-        """Let a conversation that has ended reach the stream before its two weeks are up."""
+        """Let a conversation that has ended reach the stream before its two weeks are up (asked first by GET)."""
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
         form = await read_form(request)
@@ -966,8 +1007,31 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
         finally:
             db.close()
         if conversation and not conversation[2]:
-            append_tag({"type": "release", "at": whole_seconds(*conversation[:2])}, labels_dir / "release.jsonl")
-            apply_later(background)
+            record = {"type": "release", "at": whole_seconds(*conversation[:2])}
+            append_tag(record, labels_dir / "release.jsonl")
+            if corral_url:
+                background.add_task(enqueue_on_corral, enqueue.after_release(record["tagged_at"]))
+        return go_back(form)
+
+    @app.post("/release/undo")
+    async def cancel_release(request: Request) -> Response:
+        """Cancel a release that isn't due yet. Once it's due, a reprocess may already
+        have it, so it stands."""
+        if not logged_in(request):
+            return RedirectResponse("/login", status_code=303)
+        form = await read_form(request)
+        db = connect()
+        try:
+            conversation = db.execute("SELECT start, end FROM conversations WHERE conversation_id = ?",
+                                      (form.get("conversation_id", [""])[0],)).fetchone()
+        finally:
+            db.close()
+        if conversation:
+            start, end = conversation
+            now = time.time()
+            for r in read_releases(labels_dir):
+                if r["start"] <= start and end <= r["end"] and r["due"] > now:
+                    append_tag({"type": "undo", "at": r["at"]}, labels_dir / "release.jsonl")
         return go_back(form)
 
     @app.post("/forget/undo")

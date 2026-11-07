@@ -83,7 +83,9 @@ def log_in(client):
     ("POST", "/turn/delete/undo", {"turn_id": "a0"}, "/login"),
     ("POST", "/forget", {"conversation_id": "c1", "action": "whole"}, "/login"),
     ("POST", "/forget/undo", {"conversation_id": "c1", "at": "2026-01-01T00:00:00+00:00|2026-01-01T00:00:04+00:00"}, "/login"),
+    ("GET", "/release?conversation_id=c1", None, "/login"),
     ("POST", "/release", {"conversation_id": "c1"}, "/login"),
+    ("POST", "/release/undo", {"conversation_id": "c1"}, "/login"),
     ("POST", "/places", {"action": "name", "name": "Back Room", "latitude": "-26.12", "longitude": "80.14"}, "/login"),
     ("POST", "/words", {"action": "save", "words": "Xanthe"}, "/login"),
     ("POST", "/apply", {"back": "/"}, "/login"),
@@ -595,11 +597,11 @@ def test_a_tag_can_be_undone_and_the_page_s_script_gets_no_page_back(portal):
     assert (tagged["name"], undone["name"], undone["at"]) == ("_media", "", tagged["at"])
 
 
-def test_a_conversation_is_held_until_released_from_its_page_once_it_has_ended(portal):
+def test_a_conversation_is_held_until_released_from_its_page_once_it_has_ended(portal, monkeypatch):
     from hearsay.affect import SCHEMA as AFFECT_SCHEMA
     from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
     from hearsay.delivery import SCHEMA as DELIVERY_SCHEMA
-    from hearsay.hold import record_releases
+    from hearsay.hold import DELAY, record_releases
     from hearsay.stream import write_stream
 
     client, db_path, labels_dir = portal
@@ -614,15 +616,38 @@ def test_a_conversation_is_held_until_released_from_its_page_once_it_has_ended(p
     db.close()
 
     page = client.get("/conversations/c1").text
-    assert "Idea Machine: held until" in page and "Release to Idea Machine now" in page
-    assert "Release to Idea Machine now" not in client.get("/conversations/c2").text
+    assert "Idea Machine: held until" in page and "Release to Idea Machine</button>" in page
+    assert "Release to Idea Machine" not in client.get("/conversations/c2").text
     client.post("/release", data={"conversation_id": "c2"})
     assert not (labels_dir / "release.jsonl").exists()
 
+    # The button asks on a page of its own, not in a dialog a web view can skip; asking writes nothing.
+    assert "<form class='release' method='get' action='/release'>" in page
+    asked = client.get("/release", params={"conversation_id": "c1", "back": "//evil.example"})
+    assert "Release to Idea Machine?" in asked.text and "<form method=\"post\" action=\"/release\">" in asked.text
+    assert "<a href=\"/conversations/c1\">Keep it held</a>" in asked.text and not (labels_dir / "release.jsonl").exists()
+    assert client.get("/release", params={"conversation_id": "c2"}, follow_redirects=False).status_code == 303
+
+    def published(at: float) -> str:
+        record_releases(db_path, labels_dir, at)
+        write_stream(db_path, labels_dir / "stream", at)
+        return client.get("/conversations/c1").text
+
+    # Released, it waits DELAY: a reprocess before then leaves it held, and it can be cancelled.
     page = client.post("/release", data={"conversation_id": "c1"}).text
-    assert "Idea Machine: released: out at the next reprocess" in page and "Release to" not in page
-    record_releases(db_path, labels_dir)
-    write_stream(db_path, labels_dir / "stream")
+    assert "unless you cancel" in page and "Cancel release" in page and "Release to" not in page
+    assert client.get("/release", params={"conversation_id": "c1"}, follow_redirects=False).status_code == 303
+    assert "Idea Machine: released, goes at" in published(now + DELAY - 5)
+    page = client.post("/release/undo", data={"conversation_id": "c1"}).text
+    assert "Idea Machine: held until" in page and "Release to Idea Machine</button>" in page
+    assert "Idea Machine: held until" in published(now + DELAY + 5)
+
+    # Released again, it's due DELAY after this press, and then it can't be cancelled.
+    client.post("/release", data={"conversation_id": "c1"})
+    monkeypatch.setattr(time, "time", lambda: now + 2 * DELAY)
+    page = client.post("/release/undo", data={"conversation_id": "c1"}).text
+    assert "Idea Machine: released: out at the next reprocess" in page and "Cancel release" not in page
+    published(now + 2 * DELAY)
     listed = client.get("/conversations").text
     assert listed.count("in the stream") == 1 and listed.count("held until") == 1
     assert "Idea Machine: in the stream" in client.get("/conversations/c1").text
@@ -750,6 +775,29 @@ def test_each_edit_enqueues_one_reprocess_to_apply_it(corral):
     client.post("/places", data={"action": "name", "name": "Back Room"})
     client.post("/turn", data={"turn_id": "a0", "category": "Alice"})
     assert len(calls) == 2
+
+
+def test_each_release_enqueues_a_reprocess_of_its_own_held_until_it_is_due(portal, corral):
+    from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
+    from hearsay.enqueue import APPLY
+    from hearsay.hold import DELAY
+
+    _, db_path, _ = portal
+    client, labels_dir, calls = corral
+    db = sqlite3.connect(db_path)
+    db.executescript(CONVERSATIONS_SCHEMA)
+    db.execute("INSERT INTO conversations VALUES ('c1', ?, ?, 32, 0)", (time.time() - 3600, time.time() - 3000))
+    db.commit()
+    db.close()
+    log_in(client)
+    client.post("/release", data={"conversation_id": "c1"})
+    client.post("/release/undo", data={"conversation_id": "c1"})  # not an edit a reprocess needs
+    client.post("/release", data={"conversation_id": "c1"})
+    specs = [spec for _, spec in calls]
+    # Under APPLY's key, or one press's, it would coalesce into a job that may run before it's due.
+    assert len(specs) == 2 and len({spec["key"] for spec in specs} | {APPLY["key"]}) == 3
+    assert all(spec["wait_seconds"] >= DELAY and spec["quiet_seconds"] >= DELAY for spec in specs)
+
 
 
 def test_a_words_update_enqueues_the_whole_pipeline(portal, tmp_path, monkeypatch):

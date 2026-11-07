@@ -8,8 +8,8 @@ CHAIN only when a conversation has ended that the database doesn't have as
 ended yet (hearsay/check.py). An hourly cron enqueues CHECK too, for uploads
 that couldn't reach corral (install/nas.sh). Each step has its own coalescing
 key, so a burst queues one of each, and one enqueued during a run queues one
-more behind it. Reprocess appears under two keys, so a queued fold never
-swallows a new first step.
+more behind it. Reprocess appears under keys of its own, so a queued fold
+never swallows a new first step.
 
 Transcription takes a backlog in chunks and its `then` runs after each one,
 so the fold is held (corral's wait_seconds) while transcription or the
@@ -19,9 +19,13 @@ and at least every 30 minutes while it lasts.
 A portal edit enqueues APPLY (hearsay/portal.py): a full reprocess under the
 fold's key, so one run serves both, held until the edits have stopped for 10
 minutes, and at most 30 minutes after the first; the portal's Apply now
-releases it at once. A nightly cron enqueues CHAIN itself, so what's due by
-time alone (a hold ending, sealing, retention) happens on a day nothing is
-recorded or edited too, and anything a check missed is transcribed by then.
+releases it at once. A release (hearsay/hold.py) takes effect 5 minutes
+after it's pressed, and a run before then leaves it out, so it enqueues a
+reprocess of its own held until then (after_release): under the fold's key
+it could be swallowed by a job that runs sooner. A nightly cron enqueues
+CHAIN itself, so what's due by time alone (a hold ending, sealing,
+retention) happens on a day nothing is recorded or edited too, and anything
+a check missed is transcribed by then.
 A Words update enqueues CHAIN as well: it changes what transcription is
 nudged toward, so everything not yet sealed is transcribed again.
 """
@@ -30,6 +34,8 @@ import argparse
 import json
 import os
 import urllib.request
+
+from hearsay.hold import DELAY
 
 IDEAMACHINE = {"kind": "ideamachine.run", "needs": ["nas"], "key": "ideamachine.run"}
 FOLD = {"kind": "hearsay.reprocess", "needs": ["nas"], "key": "hearsay.reprocess:transcripts",
@@ -41,6 +47,13 @@ CHECK = {"kind": "hearsay.check", "needs": ["nas"], "key": "hearsay.check"}
 APPLY = FOLD | {"quiet_seconds": 600}
 
 SPECS = {"check": CHECK, "chain": CHAIN}
+
+
+def after_release(tagged_at: str) -> dict:
+    """The reprocess that sends a release once it's due: held DELAY from when it's
+    enqueued, which is after the release was written. Its key is its own, so
+    nothing coalesces into it and moves it sooner."""
+    return FOLD | {"key": f"hearsay.reprocess:release:{tagged_at}", "wait_seconds": DELAY, "quiet_seconds": DELAY}
 
 
 def call(corral_url: str, corral_token: str, path: str, body: dict | None = None) -> tuple[dict, int]:

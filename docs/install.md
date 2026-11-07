@@ -352,7 +352,10 @@ in order, with how long it was quiet between them. Times are the NAS's time
 zone, which `nas.sh` hands the portal.
 Idea Machine sees a conversation only two weeks after it ends, and each
 says whether it's in the stream yet or held, and until when. To send one
-sooner, once it has ended, press Release to Idea Machine now on its page.
+sooner, once it has ended, press Release to Idea Machine on its page and
+then Release on the page that asks. It goes 5 minutes later, and until then
+the button is Cancel release; once it's gone it can't be taken back, only
+thrown out.
 Each opens as its transcript in order, with who the stream says said each
 turn (or why it's left out) and where; tap a turn's time to play the
 conversation from there. To throw out turns, check them and press Throw out
