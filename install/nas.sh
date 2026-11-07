@@ -91,7 +91,7 @@ for ds in raw audio imports pcm transcripts; do
 done
 AUDIO_REPLICA="storage/hearsay-audio-replica"
 export AUDIO_DATASETS AUDIO_REPLICA
-# Each call takes a command: tasks, exclude, run, plan FILE, destroy FILE, verify.
+# Each call takes a command: tasks, exclude, run, verify.
 backups() {
     python3 - "$@" <<'EOF'
 import json
@@ -167,15 +167,6 @@ def target(replication, dataset):
     return os.path.join(replication["target_dataset"], os.path.relpath(dataset, base))
 
 
-def size(n):
-    n = float(n)
-    for unit in ("B", "KiB", "MiB", "GiB"):
-        if n < 1024:
-            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
-        n /= 1024
-    return f"{n:.1f} TiB"
-
-
 def wide_snapshot_tasks():
     return [t for t in query("pool.snapshottask.query")
             if t["recursive"] and any(below(t["dataset"], d) for d in AUDIO)]
@@ -212,25 +203,6 @@ def differs(have, want):
     if "periodic_snapshot_tasks" in want:
         have = dict(have, periodic_snapshot_tasks=sorted(t["id"] for t in have["periodic_snapshot_tasks"]))
     return [k for k, v in want.items() if have.get(k) != v]
-
-
-def old_backups():
-    """The NAS-wide tasks' copies of the audio datasets: snapshots on fast
-    named by the NAS-wide snapshot task, and whole replicas on storage."""
-    schemas = {t["naming_schema"] for t in wide_snapshot_tasks()}
-    found = []
-    for d in AUDIO:
-        found += [("snapshot", name, int(used)) for name, used in snapshots(d)
-                  if any(named(name, s) for s in schemas)]
-    for r in wide_replications():
-        if r["transport"] != "LOCAL":
-            print(f"Not checked: replication {r['name']!r} sends them to another host.", file=sys.stderr)
-            continue
-        for d in AUDIO:
-            replica = target(r, d)
-            if any(below(s, d) for s in r["source_datasets"]) and (rows := zfs_list("-o", "name,used", replica)):
-                found.append(("dataset", replica, int(rows[0][1])))
-    return found
 
 
 def tasks():
@@ -277,7 +249,7 @@ def exclude():
             # A task's retention only prunes datasets it covers, so without
             # fixate_removal_date the snapshots it already took of these
             # would be kept forever. With it they still go when they'd have
-            # expired (unless destroyed below first).
+            # expired.
             call("pool.snapshottask.update", t["id"], {"exclude": t["exclude"] + missing, "fixate_removal_date": True})
             print(f"snapshot task on {t['dataset']} now excludes {', '.join(missing)}")
         else:
@@ -285,8 +257,8 @@ def exclude():
 
 
 def run():
-    """Take each dataset's first snapshot and replica now, so the new backups
-    exist before the old ones are destroyed."""
+    """Take each dataset's first snapshot and replica now, so verify finds
+    them backed up on the first install."""
     have = own_snapshot_tasks()
     # One task at a time: started together, TrueNAS can leave one PENDING
     # and never take its snapshot (seen on 25.10.7 with five at once).
@@ -315,53 +287,6 @@ def run():
                  " See Data Protection -> Replication Tasks in the TrueNAS UI.")
 
 
-def plan(path):
-    found = old_backups()
-    with open(path, "w") as f:
-        f.writelines(f"{kind}\t{name}\n" for kind, name, _ in found)
-    if not found:
-        print("No old long backups of them left.")
-        return
-    print("Their copies in the NAS-wide backups would keep this audio up to 2 months past retention."
-          " They now have their own backups, so these go:")
-    for d in AUDIO:
-        rows = [(name, used) for kind, name, used in found if kind == "snapshot" and name.startswith(d + "@")]
-        if rows:
-            [(held,)] = zfs_list("-o", "usedbysnapshots", d)
-            print(f"\n  {len(rows)} snapshot(s) of {d} (all its snapshots together hold {size(held)}):")
-            for name, used in rows:
-                print(f"    {name}  ({size(used)} only in it)")
-    replicas = [(name, used) for kind, name, used in found if kind == "dataset"]
-    if replicas:
-        print("\n  Replica datasets, with everything under them:")
-        for name, used in replicas:
-            under = [n for n, in zfs_list("-r", "-t", "all", "-o", "name", name) if n != name]
-            snaps = sum("@" in n for n in under)
-            print(f"    {name}  {size(used)}, {snaps} snapshot(s), {len(under) - snaps} child dataset(s)")
-    print(f"\nIn all: {sum(k == 'snapshot' for k, _, _ in found)} snapshot(s) on fast and {len(replicas)} replica"
-          f" dataset(s) ({size(sum(u for _, u in replicas))}).")
-
-
-def destroy(path):
-    with open(path) as f:
-        planned = [line.rstrip("\n").split("\t") for line in f]
-    # Only what was listed, and only if it's still what the listing meant.
-    current = {name for _, name, _ in old_backups()}
-    if any(name not in current for _, name in planned):
-        sys.exit("ERROR: the old backups changed since they were listed. Re-run to list them again.")
-    # And only while the new backups hold everything.
-    if missing := unreplicated(own_replication()):
-        sys.exit(f"ERROR: {', '.join(missing)} isn't replicated to {REPLICA} yet, so nothing is destroyed. Re-run.")
-    for kind, name in planned:
-        if kind == "snapshot":
-            call("pool.snapshot.delete", name)
-        else:
-            # Deleting a dataset also deletes tasks whose own datasets are
-            # inside it (TrueNAS's attachments); no task's are inside a replica.
-            call("pool.dataset.delete", name, {"recursive": True})
-        print(f"destroyed: {name}")
-
-
 def verify():
     problems = []
     for t in wide_snapshot_tasks():
@@ -382,7 +307,6 @@ def verify():
     else:
         problems += [f"the newest {SCHEMA} snapshot of {d} isn't in {target(replication, d)}"
                      for d in unreplicated(replication)]
-    problems += [f"{name} is still there" for _, name, _ in old_backups()]
     if problems:
         sys.exit("ERROR: the audio datasets' backups aren't as they should be:\n  " + "\n  ".join(problems))
     for d in AUDIO:
@@ -396,25 +320,12 @@ def verify():
 
 
 command, *args = sys.argv[1:]
-{"tasks": tasks, "exclude": exclude, "run": run, "plan": plan, "destroy": destroy, "verify": verify}[command](*args)
+{"tasks": tasks, "exclude": exclude, "run": run, "verify": verify}[command](*args)
 EOF
 }
 backups tasks
 backups exclude
 backups run
-# For moving the audio datasets to their own backups (the NAS): the NAS-wide
-# tasks' copies of them. Delete this, and plan, destroy and old_backups above
-# (and its check in verify), once nas.sh has run there.
-# Manual: it destroys backups, so the operator reads exactly what goes first.
-plan="$(mktemp)"
-trap 'rm -f "$plan"' EXIT
-backups plan "$plan"
-if [ -s "$plan" ]; then
-    echo
-    confirm "Destroy exactly these? Ctrl-C keeps them and stops here; re-running asks again."
-    backups destroy "$plan"
-fi
-rm -f "$plan"
 backups verify
 
 say "Idea Machine's vocab folder $IDEAMACHINE_VOCAB_DIR"
@@ -511,19 +422,6 @@ if curl -s -o /dev/null --max-time 3 "http://$HEARSAY_LAN_IP:$NAS_CAPTURE_PORT/c
     die "the capture receiver answers on the LAN address; it must be tailnet only"
 fi
 
-say "Decoded audio moves to $NAS_PCM"
-# For moving decoded audio out of db into its own dataset (the NAS). It's a
-# cache the next reprocess rebuilds (only unsealed uploads are decoded), so
-# it's removed, not moved. After the images are built, so no run of the old
-# code makes it again, and under the lock, so no run is reading it. Delete
-# this once nas.sh has run there.
-for old in "$NAS_DB/capture-pcm" "$NAS_DB/imports-pcm"; do
-    if [ -d "$old" ]; then
-        flock /run/hearsay-reprocess.lock rm -rf "$old"
-        echo "removed: $old"
-    fi
-done
-
 say "Reprocessing now"
 # Also the check that every captured payload parses: reprocess replaces the
 # database only if all of them do. (The real-capture test in `check` repeats
@@ -563,12 +461,6 @@ print(json.dumps({"user": "root", "command": command, "description": description
         echo "up to date: $description, enqueues $what (cron minute $minute, hour $hour; job $id)"
     fi
 }
-# For the switch to corral (the NAS): corral's worker runs reprocess now, so
-# the hourly reprocess cron job goes. Delete this once nas.sh has run with
-# corral up.
-cron_id="$(midclt call cronjob.query '[["description", "=", "hearsay reprocess"]]' \
-    | python3 -c 'import json, sys; jobs = json.load(sys.stdin); print(jobs[0]["id"] if jobs else "")')"
-[ -z "$cron_id" ] || { midclt call cronjob.delete "$cron_id" >/dev/null; echo "removed: hourly reprocess"; }
 cron_job "hearsay enqueue" 30 "*" check
 # Before the audio datasets' snapshots at 04:00, so they don't keep what retention deletes.
 cron_job "hearsay nightly" 0 3 chain
