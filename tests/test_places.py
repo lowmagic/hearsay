@@ -63,6 +63,26 @@ def test_a_conversation_lists_the_named_places_it_happened_at(tmp_path):
     assert "-26.1" not in (stream / "index.json").read_text()  # never coordinates
 
 
+def test_new_stays_keep_the_fix_accuracy_and_legacy_stays_keep_the_radius(tmp_path):
+    raw, db_path = tmp_path / "raw", tmp_path / "h.sqlite"
+    t0 = T.timestamp()
+    latitude, longitude = 0.5, 0.5
+    legacy = struct.pack("<BBBddf", 2, 90, 0, latitude, longitude, 100.0)
+    current = struct.pack("<BBBddff", 2, 90, 0, latitude, longitude, 100.0, 7.25)
+    records = [record(t0, MOVEMENT, legacy),
+               fix(t0 + 60, latitude, longitude, accuracy=9),
+               record(t0 + 300, MOVEMENT, current),
+               record(t0 + 600, MOVEMENT, struct.pack("<BBB", 3, 90, 4))]
+    upload(raw, T + timedelta(minutes=11), "k-mixed-stays", b"".join(records))
+    rebuild(raw, db_path)
+
+    with sqlite3.connect(db_path) as db:
+        readings = db.execute("SELECT at, latitude, longitude, accuracy FROM locations ORDER BY at").fetchall()
+    assert readings == [(t0, latitude, longitude, 100.0),
+                        (t0 + 60, latitude, longitude, 9.0),
+                        (t0 + 300, latitude, longitude, 7.25)]
+
+
 def test_staying_put_keeps_the_place_without_fresh_fixes(tmp_path):
     raw, db_path, labels, stream = tmp_path / "raw", tmp_path / "h.sqlite", tmp_path / "labels", tmp_path / "stream"
     labels.mkdir()

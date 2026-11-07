@@ -136,7 +136,8 @@ final class Location: NSObject, ObservableObject, CLLocationManagerDelegate {
                 Task { await monitor?.remove(Self.anchorID) }
             case let .record(state, confidence, reason, anchor):
                 self.state = state
-                record(state, confidence: confidence, reason: reason, anchor: anchor)
+                target()?.append(kind: Spool.movement,
+                                 data: Movement.record(state, confidence: confidence, reason: reason, anchor: anchor))
             }
         }
     }
@@ -214,16 +215,6 @@ final class Location: NSObject, ObservableObject, CLLocationManagerDelegate {
         data.append(flags)
         data.append(UInt8(activity.confidence.rawValue))
         target()?.append(kind: Spool.activity, data: data)
-    }
-
-    private func record(_ state: Movement.State, confidence: Double, reason: Movement.Reason, anchor: Movement.Anchor?) {
-        var data = Data([state.rawValue, UInt8((confidence * 100).rounded()), reason.rawValue])
-        if let anchor {
-            withUnsafeBytes(of: anchor.latitude.bitPattern.littleEndian) { data.append(contentsOf: $0) }
-            withUnsafeBytes(of: anchor.longitude.bitPattern.littleEndian) { data.append(contentsOf: $0) }
-            withUnsafeBytes(of: Float(anchor.radius).bitPattern.littleEndian) { data.append(contentsOf: $0) }
-        }
-        target()?.append(kind: Spool.movement, data: data)
     }
 
     /// Driving wins over the rest, as Core Motion can say several at once

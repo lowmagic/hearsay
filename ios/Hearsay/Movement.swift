@@ -16,9 +16,9 @@ import Foundation
 /// driving it takes vehicleDwell, so a red light or a queue doesn't settle,
 /// until the owner walks or the car disconnects (an arrival). Leaving is only suspected (the geofence,
 /// sustained motion, the car connecting, a cheap fix every checkInterval)
-/// until a precise fix lands outside the anchor by more than its own
-/// accuracy, and a single one only counts with motion or the geofence
-/// agreeing; otherwise a second fix confirmDelay later must say so too.
+/// until two fixes at least confirmDelay apart, each accurate to
+/// departureAccuracy or better, land beyond the combined uncertainty of
+/// the anchor fix and the new fix. Motion and the geofence never prove leaving.
 /// The car is context, never proof: connected says it's near, not moving;
 /// disconnecting asks for a fix, as a possible arrival.
 ///
@@ -46,7 +46,8 @@ struct Movement {
     struct Anchor: Equatable {
         let latitude: Double
         let longitude: Double
-        let radius: Double  // metres
+        let radius: Double  // geofence size in metres, not location uncertainty
+        let accuracy: Double  // the anchor fix's reported horizontal accuracy
     }
 
     enum Effect: Equatable {
@@ -73,8 +74,10 @@ struct Movement {
     static let fixTimeout = 90.0
     /// Fixes less accurate than this are recorded but not reasoned on.
     static let usableAccuracy = 200.0
-    /// A single displaced fix this accurate departs when motion or the geofence agree.
+    /// Settling while walking needs fixes this accurate to rule out a vague agreement.
     static let goodAccuracy = 50.0
+    /// Departure needs two fixes at least this accurate, even when motion agrees.
+    static let departureAccuracy = 20.0
     static let minRadius = 100.0
 
     private(set) var state = State.off
@@ -91,7 +94,6 @@ struct Movement {
     private var asking: Double?  // when the fix in flight was asked for
     private var lastAsked = -Double.infinity
     private var displaced: Fix?
-    private var leftAt = -Double.infinity  // the geofence said we left
     private var lastHeartbeat = 0.0
     private var lastSuspicion = -Double.infinity
     private var suspicionWait = suspicionGap
@@ -115,7 +117,10 @@ struct Movement {
     mutating func fix(_ fix: Fix) -> [Effect] {
         guard state != .off else { return [] }
         asking = nil
-        guard fix.accuracy >= 0, fix.accuracy <= Self.usableAccuracy else { return [] }
+        guard fix.accuracy >= 0, fix.accuracy <= Self.usableAccuracy else {
+            displaced = nil
+            return []
+        }
         if let anchor { return checkDeparture(fix, from: anchor) }
         if state == .uncertain, let paused = pausedAt, fixes.isEmpty, !movingNow(at: fix.at),
            distance(fix, paused) <= paused.radius, fix.accuracy <= paused.radius {
@@ -127,7 +132,7 @@ struct Movement {
         if let earlier = fixes.dropLast().last(where: { fix.at - $0.at >= dwell && agree($0, fix) }),
            lastMoving < earlier.at, !movingNow(at: fix.at) {
             let still = activity.kind == .stationary && activity.confidence >= .medium
-            return settle(at: center(of: fixes.filter { $0.at >= earlier.at && agree($0, fix) }),
+            return settle(at: anchor(from: fixes.filter { $0.at >= earlier.at && agree($0, fix) }),
                           confidence: still ? 0.9 : 0.7, reason: .settled, now: fix.at)
         }
         // Moving about one spot (a party, a yoga class) is staying there: where
@@ -135,20 +140,23 @@ struct Movement {
         if !droveLast, let earlier = fixes.dropLast().last(where: { fix.at - $0.at >= Self.lingerSpan }) {
             let used = fixes.filter { $0.at >= earlier.at }
             if used.count >= 3, used.allSatisfy({ $0.accuracy <= Self.goodAccuracy && agree($0, fix) }) {
-                return settle(at: center(of: used), confidence: 0.5, reason: .settled, now: fix.at)
+                return settle(at: anchor(from: used), confidence: 0.5, reason: .settled, now: fix.at)
             }
         }
         return classify(at: fix.at)
     }
 
-    /// Weighted towards the sharper fixes, wide enough for the worst of them.
-    private func center(of used: [Fix]) -> Anchor {
-        let weights = used.map { 1 / max($0.accuracy, 5) / max($0.accuracy, 5) }
-        let total = weights.reduce(0, +)
-        return Anchor(
-            latitude: zip(used, weights).map { $0.latitude * $1 }.reduce(0, +) / total,
-            longitude: zip(used, weights).map { $0.longitude * $1 }.reduce(0, +) / total,
-            radius: max(Self.minRadius, 1.5 * used.map(\.accuracy).max()!))
+    /// Keep an actual fix's uncertainty: averaging coordinates has no reported
+    /// accuracy. Prefer the latest of the sharpest fixes; size the geofence as before.
+    private func anchor(from used: [Fix]) -> Anchor {
+        var best = used[0]
+        var worstAccuracy = best.accuracy
+        for fix in used.dropFirst() {
+            if fix.accuracy <= best.accuracy { best = fix }
+            worstAccuracy = max(worstAccuracy, fix.accuracy)
+        }
+        return Anchor(latitude: best.latitude, longitude: best.longitude,
+                      radius: max(Self.minRadius, 1.5 * worstAccuracy), accuracy: best.accuracy)
     }
 
     mutating func activity(_ kind: Activity, _ confidence: Confidence, at now: Double) -> [Effect] {
@@ -180,7 +188,6 @@ struct Movement {
 
     mutating func leftAnchor(at now: Double) -> [Effect] {
         guard anchor != nil else { return [] }
-        leftAt = now
         return ask(precise: true, at: now)
     }
 
@@ -223,15 +230,16 @@ struct Movement {
     }
 
     private mutating func checkDeparture(_ fix: Fix, from anchor: Anchor) -> [Effect] {
-        guard distance(fix, anchor) - fix.accuracy > anchor.radius else {
-            displaced = nil  // an outlier, or a check that found us home
+        guard fix.accuracy <= Self.departureAccuracy,
+              distance(fix, anchor) > anchor.accuracy + fix.accuracy else {
+            displaced = nil  // home, or too uncertain to confirm leaving
             return []
         }
-        let corroborated = fix.accuracy <= Self.goodAccuracy && (movingNow(at: fix.at) || fix.at - leftAt <= Self.movingInterval)
-        guard displaced != nil || corroborated else {
+        guard let first = displaced else {
             displaced = fix
             return []
         }
+        guard fix.at - first.at >= Self.confirmDelay else { return [] }
         self.anchor = nil
         displaced = nil
         fixes = [fix]
@@ -283,6 +291,23 @@ struct Movement {
         asking = now
         lastAsked = now
         return [.requestFix(precise: precise)]
+    }
+
+    /// MOVEMENT payload. The trailing accuracy extends the original anchor
+    /// (latitude, longitude, geofence radius); old captures have no final float.
+    static func record(_ state: State, confidence: Double, reason: Reason, anchor: Anchor?) -> Data {
+        var data = Data()
+        data.reserveCapacity(anchor == nil ? 3 : 27)
+        data.append(state.rawValue)
+        data.append(UInt8((confidence * 100).rounded()))
+        data.append(reason.rawValue)
+        if let anchor {
+            withUnsafeBytes(of: anchor.latitude.bitPattern.littleEndian) { data.append(contentsOf: $0) }
+            withUnsafeBytes(of: anchor.longitude.bitPattern.littleEndian) { data.append(contentsOf: $0) }
+            withUnsafeBytes(of: Float(anchor.radius).bitPattern.littleEndian) { data.append(contentsOf: $0) }
+            withUnsafeBytes(of: Float(anchor.accuracy).bitPattern.littleEndian) { data.append(contentsOf: $0) }
+        }
+        return data
     }
 
     private func moving(_ kind: Activity, _ confidence: Confidence) -> Bool {

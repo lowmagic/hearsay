@@ -1,6 +1,6 @@
 // swift-tools-version:5.9
-// Only for testing Movement, which uses nothing but Foundation: `swift test`
-// here, on the Mac or Linux. The app itself builds from Hearsay.xcodeproj.
+// Plain movement logic and MOVEMENT record encoding: `swift test` here, on
+// the Mac or Linux. The app itself builds from Hearsay.xcodeproj.
 import PackageDescription
 
 let package = Package(

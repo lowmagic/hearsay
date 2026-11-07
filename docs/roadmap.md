@@ -395,17 +395,22 @@ minutes, which loses nothing a conversation's places need.
 Revised 2026-10-13, to spend battery only when the owner moves: a precise
 fix when recording starts or resumes and about every 5 minutes on the move;
 staying put (two fixes at least 2 minutes apart agreeing within their
-accuracy, no confident motion between) makes an anchor, and fixes stop.
-Core Motion's activity (still, walking, cycling, driving) asks for fixes
-sooner or later; a geofence, sustained motion, the car connecting or a fix
-every 30 minutes suspects leaving, and a precise fix outside the anchor by
-more than its accuracy confirms it, alone only with motion or the geofence
-agreeing. After driving, settling takes 10 minutes unless the owner walks
+accuracy, no confident motion between) makes an anchor from the sharpest
+fix, with its reported accuracy, and fixes stop. The geofence radius stays
+separate. Core Motion's activity (still, walking, cycling, driving) asks for
+fixes sooner or later; a geofence, sustained motion, the car connecting or a
+fix every 30 minutes suspects leaving. Departure needs two fixes at least
+a minute apart, each accurate to 20 m or better and outside the anchor by
+more than its own and the anchor fix's combined uncertainty. Motion and the
+geofence never bypass confirmation. Sustained-motion checks double their
+interval from 5 minutes to at most 30 minutes after unsuccessful checks.
+After driving, settling takes 10 minutes unless the owner walks
 or the car's Bluetooth disconnects, so traffic doesn't settle. The car is
 whichever Bluetooth audio output the owner picks in the app, read from the
 audio route without touching it; it suggests the car is near, never that
 it moves. Settled, the app says every 5 minutes it's still at its anchor,
-and the NAS reads that as a reading. Activity, route changes and every
+including the fix accuracy separately from the geofence radius, and the
+NAS reads that as a reading. Activity, route changes and every
 state, with its confidence and reason, are records in the upload, so trips
 can be reconstructed from raw later. AirTags were left out: Find My has no
 public API. The state machine is ios/Hearsay/Movement.swift, tested on its
@@ -445,8 +450,9 @@ inside a real place's circle now or once it grows: labels/places.jsonl
 takes {"type": "drop", start, end} (those readings count for no place) and
 {"type": "at", start, end, name} (they were at that place wherever they
 say), applied on every reprocess, raw untouched. Fixes iOS reports as
-worse than 300 m are left out too (a stay's readings carry its anchor's
-radius, at most 300). The app offers both on each conversation it lists
+worse than 300 m are left out too. New stay records carry the anchor fix's
+accuracy; older ones carry only the geofence radius, with no way to recover
+the original accuracy. The app offers both corrections on each conversation it lists
 for a place or a spot.
 
 ## 14. Place as a hint for who is speaking
