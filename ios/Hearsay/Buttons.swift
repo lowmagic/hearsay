@@ -9,6 +9,7 @@ import Foundation
 /// what it did) next to the tap's own BUTTON record, so the NAS knows which
 /// taps were conversation marks (hearsay/capture.py, marks).
 final class Buttons: ObservableObject {
+    /// Pause and off each go back on when tapped again.
     enum Action: String, CaseIterable, Identifiable {
         case nothing, start, end, pause, mute
         var id: Self { self }
@@ -18,26 +19,26 @@ final class Buttons: ObservableObject {
             case .nothing: "Nothing"
             case .start: "Mark: keep this conversation"
             case .end: "Mark: end the conversation"
-            case .pause: "Pause / resume"
-            case .mute: "Mute / unmute"
+            case .pause: "Pause / on"
+            case .mute: "Off / on"
             }
         }
     }
 
-    /// What a tap did. The raw values are the ACTION record's codes.
+    /// What a tap did. The raw values are the ACTION record's codes: paused,
+    /// resumed (paused to on), muted (to off), unmuted (off to on).
     enum Outcome: UInt8 {
         case nothing = 0, start, end, paused, resumed, muted, unmuted
 
-        /// Buzzes of 100 (1), 300 (2) and 500 ms (3).
+        /// Buzzes of 100 (1), 300 (2) and 500 ms (3): one per mode reached.
         var buzz: [UInt8] {
             switch self {
             case .nothing: []
             case .start: [1]
             case .end: [2]
             case .paused: [3]
-            case .resumed: [1, 1]
+            case .resumed, .unmuted: [1, 1]
             case .muted: [3, 3]
-            case .unmuted: [1, 1, 1]
             }
         }
     }
@@ -67,28 +68,28 @@ final class Buttons: ObservableObject {
         case Self.doubleTap: action = double
         default: return  // the release that follows every tap
         }
-        let outcome: Outcome
-        switch action {
-        case .nothing: outcome = .nothing
-        case .start: outcome = .start
-        case .end: outcome = .end
-        case .pause: outcome = pause.paused ? .resumed : .paused
-        case .mute: outcome = pendant.muted ? .unmuted : .muted
+        let mode = pause.mode
+        let target: Pause.Mode? = switch action {
+        case .nothing, .start, .end: nil
+        case .pause: mode == .paused ? .on : .paused
+        case .mute: mode == .off ? .on : .off
+        }
+        let outcome: Outcome = switch (action, target) {
+        case (.start, _): .start
+        case (.end, _): .end
+        case (_, .paused): .paused
+        case (_, .off): .muted
+        case (_, .on): mode == .off ? .unmuted : .resumed
+        default: .nothing
         }
         log.info("button \(event): \(action.rawValue), \(String(describing: outcome))")
 
         // Recorded where the tap itself went: before pausing, so it isn't
-        // withheld, and after resuming.
+        // withheld, and after switching on.
         let record = Data([event, outcome.rawValue])
-        if outcome != .resumed { pendant.record(kind: Spool.action, data: record) }
-        switch outcome {
-        case .paused: pause.pause()
-        case .resumed: pause.resume()
-        case .muted: pendant.setMuted(true)
-        case .unmuted: pendant.setMuted(false)
-        default: break
-        }
-        if outcome == .resumed { pendant.record(kind: Spool.action, data: record) }
+        if target != .on { pendant.record(kind: Spool.action, data: record) }
+        if let target { pause.set(target) }
+        if target == .on { pendant.record(kind: Spool.action, data: record) }
         pendant.buzz(outcome.buzz)
     }
 }

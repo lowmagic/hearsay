@@ -24,7 +24,7 @@ struct SettingsView: View {
                     ForEach(Buttons.Action.allCases) { Text($0.label).tag($0) }
                 }
                 DisclosureGroup("Buzzes") {
-                    Text("Keep: one short. End: one medium. Pause: one long; resume: two short. Mute: two long; unmute: three short. Holding the button 3 s turns the pendant off.")
+                    Text("Keep: one short. End: one medium. Paused: one long. Off: two long. On: two short. Holding the button 3 s powers the pendant down.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -46,12 +46,13 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle("Keep paused audio on this phone", isOn: Binding(get: { pause.keep },
-                                                                        set: { pause.setKeep($0) }))
+                Stepper("Keep for \(pause.retentionDays) days", value: Binding(get: { pause.retentionDays },
+                                                                                 set: { pause.setRetentionDays($0) }),
+                        in: Pause.retentionDayRange)
             } header: {
-                Text("Pausing")
+                Text("Paused audio")
             } footer: {
-                Text("Kept audio stays on this phone for 30 days, for you to review, with where you were; neither reaches Hearsay unless you upload it. Otherwise paused audio is dropped as it arrives.")
+                Text("Paused audio stays on this phone for you to review, with where you were, and is deleted this long after the pause ends. Neither reaches Hearsay unless you upload it, or switch on mid-conversation, which sends that conversation from where it began.")
             }
 
             Section {

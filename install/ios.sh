@@ -113,8 +113,9 @@ devices_json | grep -q "^$device" \
     || die "the phone ($device) isn't reachable; connect it by cable or put it on the same Wi-Fi, unlocked"
 
 say "Testing"
-# Movement (when the app takes location fixes) is plain Swift, tested on the Mac itself.
-(cd "$REPO_DIR/ios" && swift test --quiet) || die "Movement's tests failed; not installing"
+# The app's plain logic (when it takes location fixes, where a conversation
+# began) is plain Swift, tested on the Mac itself.
+(cd "$REPO_DIR/ios" && swift test --quiet) || die "the app's logic tests failed; not installing"
 
 say "Building"
 xcodebuild -project "$REPO_DIR/ios/Hearsay.xcodeproj" -target Hearsay -configuration Release \
