@@ -354,6 +354,8 @@ Other, Me or Mic to put it back.
 
 The portal's Conversations page lists every conversation, newest first, by
 day; narrow it to a named place, or to the ones whose words contain a search.
+A conversation that's mostly media or music (half its speech time or more),
+or mostly people other than you (80% or more), is flagged there.
 Tap a day (or Today on the front page) to read it through: its conversations
 in order, with how long it was quiet between them. Times are the NAS's time
 zone, which `nas.sh` hands the portal.
@@ -364,13 +366,18 @@ then Release on the page that asks. It goes 5 minutes later, and until then
 the button is Cancel release; once it's gone it can't be taken back, only
 thrown out.
 Each opens as its transcript in order, with who the stream says said each
-turn (or why it's left out) and where; tap a turn's time to play the
+turn (or why it's left out) and where, and links to the conversations before
+and after it; tap a turn's time to play the
 conversation from there. To throw out turns, check them and press Throw out
 checked, or Throw out all for the whole conversation. All not me and All
 media check the turns Hearsay is sure of; those marked yellow (it couldn't
 tell who spoke, or it might be media, or the voice is close to yours) are
 left for you. Check between fills in a stretch from the first turn checked
-to the last. Either way, with a few words of why if you like (Idea Machine sees
+to the last. Under Tag or place, Tag checked tags the checked turns as the
+front page tags one, and Place from checked puts the conversation at a place
+from the first turn checked to its end (from its start if none is), whatever
+the phone's readings said; both show as they will be until the next
+reprocess applies them. Throwing out takes a few words of why if you like (Idea Machine sees
 them). Each edit starts a reprocess once you've stopped making edits for 10
 minutes (at most 30 minutes after the first), so you can undo it until then.
 The portal's Apply now starts it as soon as the NAS is free. Words changes
