@@ -166,3 +166,32 @@ def test_wrong_readings_are_corrected_by_time_and_stay_corrected(tmp_path):
     wider = {**named[0], "radius": 2000}
     named[0] = wider
     assert places(*corrections, {"type": "rename", "from": "Hom", "to": "Home"}) == ["Home"]
+
+
+def test_a_span_put_at_a_place_holds_from_its_start_without_a_reading_there(tmp_path):
+    raw, db_path, labels = tmp_path / "raw", tmp_path / "h.sqlite", tmp_path / "labels"
+    labels.mkdir()
+    t0 = T.timestamp()
+    # Home before the conversation, and no reading after: the phone settled and stopped taking fixes.
+    upload(raw, T + timedelta(minutes=20), "k-settled", fix(t0 - 60, *HOME))
+    rebuild(raw, db_path)
+    db = sqlite3.connect(db_path)
+    db.executescript(CONVERSATIONS_SCHEMA)
+    db.execute("INSERT INTO conversations VALUES ('c1', ?, ?, 600, 0)", (t0, t0 + 900))
+    db.commit()
+    db.close()
+    named = [{"type": "place", "name": "Bar", "latitude": BAR[0], "longitude": BAR[1]},
+             {"type": "place", "name": "Home", "latitude": HOME[0], "longitude": HOME[1]}]
+    at_bar = {"type": "at", "start": t0 + 300, "end": t0 + 900, "name": "Bar"}
+
+    def places(*records):
+        (labels / "places.jsonl").write_text("".join(json.dumps(r) + "\n" for r in [*named, *records]))
+        find_places(db_path, labels)
+        db = sqlite3.connect(db_path)
+        found = db.execute("SELECT place, start - ?, end - ? FROM conversation_places ORDER BY start", (t0, t0)).fetchall()
+        db.close()
+        return found
+
+    assert places(at_bar) == [("Home", 0, 300), ("Bar", 300, 900)]
+    # A later correction over its start wins, as over any reading.
+    assert places(at_bar, {"type": "drop", "start": t0 + 300, "end": t0 + 300}) == [("Home", 0, 900)]

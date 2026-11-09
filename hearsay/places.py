@@ -25,8 +25,10 @@ labels/places.jsonl, one record per line:
         at the same spot to 6 decimals
     {"type": "drop", "start", "end"}  the readings in that span (unix seconds)
         were wrong: they count for no place, now or once circles change
-    {"type": "at", "start", "end", "name"}  the readings in that span were at
-        that place, wherever they say (a fix that wandered); later wins
+    {"type": "at", "start", "end", "name"}  the owner was at that place from
+        start to end: the readings in that span say so, wherever they say (a
+        fix that wandered), and it holds from start even before a reading
+        does; later wins
 
 Fixes iOS was less sure of than MAX_ACCURACY are left out too.
 """
@@ -118,19 +120,21 @@ def read_corrections(labels_dir: Path) -> list[tuple[float, float, str | None]]:
 
 
 def read_readings(db: sqlite3.Connection, labels_dir: Path,
-                  spots: list[tuple[str, float, float, float]]) -> list[tuple[float, float, float, str | None]]:
+                  spots: list[tuple[str, float, float, float]]) -> list[tuple[float, float | None, float | None, str | None]]:
     """(at, latitude, longitude, place) for each reading that counts, in time
-    order: the nearest named spot's place, or the operator's correction."""
+    order: the nearest named spot's place, or the operator's correction. Each
+    span the operator put at a place starts with a reading of its own there,
+    with no coordinates, so the place holds from when they said."""
     corrections = read_corrections(labels_dir)
     found = []
-    for at, lat, lon, accuracy in db.execute("SELECT at, latitude, longitude, accuracy FROM locations ORDER BY at"):
-        if accuracy > MAX_ACCURACY:
-            continue
+    fixes = [(at, lat, lon) for at, lat, lon, accuracy in
+             db.execute("SELECT at, latitude, longitude, accuracy FROM locations ORDER BY at") if accuracy <= MAX_ACCURACY]
+    for at, lat, lon in fixes + [(start, None, None) for start, _, name in corrections if name]:
         said = [name for start, end, name in corrections if start <= at <= end]
         if said and said[-1] is None:
             continue
         found.append((at, lat, lon, said[-1] if said else nearest(lat, lon, spots)))
-    return found
+    return sorted(found, key=lambda r: r[0])
 
 
 def nearest(latitude: float, longitude: float, spots: list[tuple[str, float, float, float]]) -> str | None:

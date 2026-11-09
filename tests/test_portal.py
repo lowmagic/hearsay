@@ -89,6 +89,8 @@ def log_in(client):
     ("POST", "/places", {"action": "name", "name": "Back Room", "latitude": "-26.12", "longitude": "80.14"}, "/login"),
     ("POST", "/words", {"action": "save", "words": "Xanthe"}, "/login"),
     ("POST", "/apply", {"back": "/"}, "/login"),
+    ("POST", "/turns/tag", {"conversation_id": "c1", "turn_id": "a0", "category": "_me"}, "/login"),
+    ("POST", "/conversations/place", {"conversation_id": "c1", "place": "Back Room"}, "/login"),
 ])
 def test_nothing_is_reachable_or_written_without_logging_in(portal, method, path, form, refused):
     client, _, labels_dir = portal
@@ -413,6 +415,59 @@ def test_all_not_me_and_all_media_mark_the_turns_hearsay_is_sure_of_and_leave_th
     assert "data-pick='notme'" not in page.split("id='c1-2'")[0]  # b1, going, is checked by nothing again
 
 
+def test_checked_turns_are_tagged_and_placed_from_their_conversation_s_page(portal):
+    from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
+    from hearsay.places import find_places
+
+    client, db_path, labels_dir = portal
+    log_in(client)
+    db = sqlite3.connect(db_path)
+    db.executescript(CONVERSATIONS_SCHEMA)
+    db.execute("INSERT INTO conversations VALUES ('c1', 1767225600, 1767225640, 32, 0)")
+    db.commit()
+    db.close()
+    form = {"conversation_id": "c1", "back": "/conversations/c1"}
+
+    # Hearsay had b1 and b3 as someone else; they were the owner. Each shows as it will be until a reprocess.
+    tagged = client.post("/turns/tag", data={**form, "turn_id": ["b3", "b1"], "category": "_me"}, follow_redirects=False)
+    assert tagged.headers["location"] == "/conversations/c1"
+    client.post("/turns/tag", data={**form, "turn_id": ["b5"], "category": "Alice"})  # not a category: ignored
+    [tag] = [json.loads(line) for line in (labels_dir / "tags.jsonl").read_text().splitlines()]
+    assert (tag["type"], tag["name"], tag["turn_ids"], tag["at"]) == ("clip", "_me", ["b1", "b3"], [
+        ["2026-01-01T00:00:05+00:00", "2026-01-01T00:00:09+00:00"],
+        ["2026-01-01T00:00:15+00:00", "2026-01-01T00:00:19+00:00"]])
+    assert client.get("/conversations/c1").text.count("Me · at the next reprocess") == 2
+    record_operator_input(db_path, labels_dir)
+    page = client.get("/conversations/c1").text
+    assert "Me · at the next reprocess" not in page and page.count("<span class='muted'>Me</span>") == 2
+
+    # At a place from the first checked turn to the end, though no reading says so.
+    client.post("/conversations/place", data={**form, "turn_id": ["b5", "b3"], "place": "  Back   Room "})
+    [placed] = [json.loads(line) for line in (labels_dir / "places.jsonl").read_text().splitlines()]
+    assert (placed["type"], placed["name"], placed["start"], placed["end"]) == ("at", "Back Room", 1767225615, 1767225640)
+    assert "At Back Room from 00:00:15 at the next reprocess" in client.get("/conversations/c1").text
+    find_places(db_path, labels_dir)
+    page = client.get("/conversations/c1").text
+    assert "Back Room from" not in page
+    assert page.index("id='c1-2'") < page.index("At Back Room") < page.index("id='c1-3'")
+
+    # Half of it music: flagged in the list.
+    client.post("/turns/tag", data={**form, "turn_id": ["a0", "a2", "a4", "a6"], "category": "_music"})
+    record_operator_input(db_path, labels_dir)
+    assert "<span class='flag'>mostly music</span>" in client.get("/conversations").text
+
+
+def test_mostly_media_music_or_not_me_each_flag_at_their_own_share_of_speech_time():
+    from hearsay.portal import mostly
+
+    owner, other, unsure = (4.0, "owner", None, "voice"), (4.0, "not_owner", None, "voice"), (4.0, None, None, None)
+    assert mostly([(4.0, None, "_media", None), owner]) == ["mostly media"]  # half
+    assert mostly([(4.0, "owner", "_music", "voice"), owner, owner]) == []  # a third
+    assert mostly([other] * 3 + [(4.0, None, "_mic", None), owner]) == ["mostly not me"]  # 80%, a mic included
+    assert mostly([other] * 3 + [unsure]) == []  # 75%: Hearsay couldn't tell who said the rest
+    assert mostly([]) == []
+
+
 def test_turns_hearsay_couldnt_decide_are_offered_and_the_operator_s_tag_decides(portal):
     from hearsay.stream import write_stream
     from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
@@ -489,6 +544,10 @@ def test_a_day_reads_its_conversations_through_in_order_by_the_host_s_clock(port
     assert "<h1>Wednesday December 31</h1>" in page and '<section id="c3">' not in page
     assert page.index('<section id="c1">') < page.index("1 h 59 min quiet") < page.index('<section id="c2">')
     assert ">19:00:00</a>" in page and "<a href='/day/2026-01-01'>Thu Jan 1 →</a>" in page and "←" not in page.split("<h1>")[1]
+    # Each conversation's page goes on to the one before and after it, whatever their day.
+    middle = client.get("/conversations/c2").text
+    assert "<a href='/conversations/c1'>← Wed Dec 31 19:00</a><a href='/conversations/c3'>Thu Jan 1 01:00 →</a>" in middle
+    assert "<p class='nav ends'><span></span><a href='/conversations/c2'>" in client.get("/conversations/c1").text
     assert "<a href='/day/2025-12-31'>Wed Dec 31</a>" in client.get("/conversations").text
     for day in ("not-a-day", "0001-01-01", "9999-12-31"):
         assert client.get(f"/day/{day}").status_code == 404
