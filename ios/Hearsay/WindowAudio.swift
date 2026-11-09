@@ -22,7 +22,8 @@ final class WindowAudio {
     static let sampleRate = 16000.0
     // Codec byte -> samples per Opus frame, as in hearsay/capture.py.
     static let frameSamples: [UInt8: Int] = [20: 160, 21: 320]
-    private static let reanchor = 1.0
+    /// A frame this far from where the run before it would end starts a new run.
+    static let reanchor = 1.0
     // Above this, a cropped upload is split; the receiver reads bodies whole.
     private static let maxUploadBytes = 4_000_000
 
@@ -57,39 +58,33 @@ final class WindowAudio {
     }
 
     /// The records from `from` to `to` (positions in the decoded audio), as
-    /// uploads. Each starts with a CONNECTED record carrying the codec, as
-    /// the NAS needs to decode it and to restart its count of the pendant's
-    /// packet index. The window's last location and movement records from
-    /// before the stretch go too: staying put, the phone reads every 5
-    /// minutes, so a short stretch may hold none of its own, and the NAS takes
-    /// where it began from the last reading before it (hearsay/places.py).
+    /// uploads.
     func cropped(from: Double, to: Double) -> [Data] {
-        let start = wallTime(from).timeIntervalSince1970, end = wallTime(to).timeIntervalSince1970
+        Self.uploads(records, codec: nil, from: wallTime(from).timeIntervalSince1970, to: wallTime(to).timeIntervalSince1970)
+    }
+
+    /// The records from `start` to `end` (wall times), as uploads. Each
+    /// starts with a CONNECTED record carrying the codec, as the NAS needs to
+    /// decode it and to restart its count of the pendant's packet index. The
+    /// last location and movement records from before the stretch go too:
+    /// staying put, the phone reads every 5 minutes, so a short stretch may
+    /// hold none of its own, and the NAS takes where it began from the last
+    /// reading before it (hearsay/places.py). `codec`: the one in effect
+    /// before the first record.
+    static func uploads(_ records: [Spool.Record], codec: UInt8?, from start: Double, to end: Double) -> [Data] {
         var uploads: [Data] = []
         var current = Data()
-        var codec: UInt8?
+        var codec = codec
         var before: [UInt8: Spool.Record] = [:]
         for record in records {
             if [Spool.location, Spool.movement].contains(record.kind) && record.at < start {
                 before[record.kind] = record
                 continue
             }
-            switch record.kind {
-            case Spool.connected:
-                codec = record.data.first
-                guard record.at >= start && record.at <= end else { continue }
-            case Spool.audio:
-                // The frame ends about when it arrived.
-                let length = codec.flatMap { Self.frameSamples[$0] }.map { Double($0) / Self.sampleRate } ?? 0
-                guard record.at >= start && record.at - length <= end else { continue }
-            case Spool.stored:
-                guard let packet = Self.storedFrames(record) else { continue }
-                guard packet.end >= start && packet.end - packet.duration <= end else { continue }
-            default:
-                guard record.at >= start && record.at <= end else { continue }
-            }
+            if record.kind == Spool.connected { codec = record.data.first }
+            guard within(record, codec: codec, from: start, to: end) else { continue }
             let encoded = record.encoded
-            if !current.isEmpty && current.count + encoded.count > Self.maxUploadBytes {
+            if !current.isEmpty && current.count + encoded.count > maxUploadBytes {
                 uploads.append(current)
                 current = Data()
             }
@@ -105,17 +100,36 @@ final class WindowAudio {
         return uploads
     }
 
+    /// Whether a record is part of the stretch from `start` to `end` (wall
+    /// times): audio by when it was heard, anything else by when it arrived.
+    /// `codec` is the one in effect, for a live frame's length.
+    static func within(_ record: Spool.Record, codec: UInt8?, from start: Double, to end: Double) -> Bool {
+        switch record.kind {
+        case Spool.audio:
+            // The frame ends about when it arrived.
+            let length = codec.flatMap { frameSamples[$0] }.map { Double($0) / sampleRate } ?? 0
+            return record.at >= start && record.at - length <= end
+        case Spool.stored:
+            guard let packet = storedFrames(record) else { return false }
+            return packet.end >= start && packet.end - packet.duration <= end
+        default:
+            return record.at >= start && record.at <= end
+        }
+    }
+
     // MARK: Decoding
 
-    private struct Frame {
+    struct Frame {
         let end: Double
         let codec: UInt8
         let bytes: Data
     }
 
-    private func decode() throws {
+    /// The frames in `records`, in the order they end. `codec`: the one in
+    /// effect before the first record.
+    static func frames(_ records: [Spool.Record], codec: UInt8?) -> [Frame] {
         var frames: [Frame] = []
-        var codec: UInt8?
+        var codec = codec
         for record in records {
             switch record.kind {
             case Spool.connected:
@@ -126,7 +140,7 @@ final class WindowAudio {
                 guard let codec, record.data.count > 3, record.data[record.data.startIndex + 2] == 0 else { continue }
                 frames.append(Frame(end: record.at, codec: codec, bytes: Data(record.data.dropFirst(3))))
             case Spool.stored:
-                guard let packet = Self.storedFrames(record) else { continue }
+                guard let packet = storedFrames(record) else { continue }
                 let length = packet.duration / Double(packet.frames.count)
                 for (i, bytes) in packet.frames.enumerated() {
                     let end = packet.end - Double(packet.frames.count - 1 - i) * length
@@ -137,6 +151,11 @@ final class WindowAudio {
             }
         }
         frames.sort { $0.end < $1.end }
+        return frames
+    }
+
+    private func decode() throws {
+        let frames = Self.frames(records, codec: nil)
 
         let pcm = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Self.sampleRate, channels: 1, interleaved: true)!
         let file = try AVAudioFile(forWriting: wav, settings: pcm.settings, commonFormat: .pcmFormatInt16, interleaved: true)
@@ -164,7 +183,7 @@ final class WindowAudio {
 
     /// A stored record's frames and when they end; layout in Pendant and
     /// hearsay/capture.py (stored_frames).
-    private static func storedFrames(_ record: Spool.Record) -> (codec: UInt8, end: Double, duration: Double, frames: [Data])? {
+    static func storedFrames(_ record: Spool.Record) -> (codec: UInt8, end: Double, duration: Double, frames: [Data])? {
         let data = record.data
         guard data.count == 17 + Pendant.storedPacketBytes, let samples = frameSamples[data[data.startIndex]] else { return nil }
         let stampStart = data.startIndex + 17
@@ -188,7 +207,7 @@ final class WindowAudio {
     }
 
     /// iOS's own Opus decoder, one per run so each starts clean.
-    private struct Decoder {
+    struct Decoder {
         let opus: AVAudioFormat
         let pcm: AVAudioFormat
         let converter: AVAudioConverter

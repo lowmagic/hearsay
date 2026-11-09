@@ -54,7 +54,8 @@ final class Pendant: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
     /// Called with each button event, after it's spooled.
     var onButton: ((UInt8) -> Void)?
 
-    /// Where what the pendant sends goes; nil drops it (paused).
+    /// Where what the pendant sends goes; nil drops it (paused, if the window
+    /// couldn't be made).
     private var spool: Spool?
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
@@ -97,8 +98,7 @@ final class Pendant: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
         if let codec { spool?.append(kind: Spool.connected, data: codec) }
     }
 
-    /// Spool a record alongside the live audio (dropped while paused and
-    /// not keeping).
+    /// Spool a record alongside the live audio (dropped where it is).
     func record(kind: UInt8, data: Data) {
         spool?.append(kind: kind, data: data)
     }
@@ -124,8 +124,8 @@ final class Pendant: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
         }
     }
 
-    /// Mute in hardware: mic gain 0, saved on the pendant, so it holds out of
-    /// range and across app crashes until unmuted. Unmuting restores the
+    /// Off (Pause): mic gain 0, saved on the pendant, so it holds out of
+    /// range and across app crashes until switched back. That restores the
     /// level from before.
     ///
     /// While muted, the pendant's audio (silence, once it has the level) is

@@ -65,7 +65,7 @@ to map to actions; ignore release.
 
 Service `CAB1AB95-2EA5-4F4D-BB56-874B72CFC984`, characteristic
 `CAB1AB96-…` (write, 1 byte): 1 = 100 ms, 2 = 300 ms, 3 = 500 ms. Other values
-are ignored. Patterns (e.g. two short for unmute, one long for mute) are
+are ignored. Patterns (e.g. two short for on, two long for off) are
 sequences the app writes with pauses between them.
 
 ## Settings

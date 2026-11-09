@@ -6,10 +6,9 @@ import Foundation
 /// Where the owner is while recording, for hearsay/places.py, spending as
 /// little battery as it can: Movement decides when a fix is worth it, and this
 /// carries that out and records what it saw. Only while audio is being kept:
-/// recording, or paused with paused audio kept on the phone, when the records
-/// go into the paused window with its audio, so they reach the NAS only if
-/// the owner uploads that stretch and are deleted with the rest. Everything
-/// stops while muted, or paused with nothing kept.
+/// on, or paused, when the records go into the paused window with its audio,
+/// so they reach the NAS only with the stretches the owner sends and are
+/// deleted with the rest. Everything stops while off.
 ///
 /// Records, all raw observations kept on the NAS:
 /// - LOCATION: each fix (Spool.location).

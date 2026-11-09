@@ -104,19 +104,26 @@ pendant's light (saved on the pendant).
 
 While out of range the pendant records to its own storage; on reconnect the
 app downloads that and uploads it like the rest, and the NAS places it by the
-pendant's clock. Pause keeps audio from reaching the NAS (dropped, or kept on
-the phone for 30 days, where a paused stretch can be played, cropped to one
-selection and uploaded, or deleted); if the app was paused at any time
-while the pendant was away, everything it stored then counts as paused. Mute
-turns the pendant's mic off in hardware, and the app uploads none of its
-audio while muted (nor what it stored while away, if muted then).
+pendant's clock.
+
+The app is on, paused or off. On, everything reaches the NAS. Paused, nothing
+does: it's kept on the phone, where a paused stretch can be played, cropped to
+one selection and uploaded, or deleted, and it's deleted on its own a number
+of days after the pause ends (30 to start; Settings, Paused audio). Switching
+from paused to on mid-conversation sends that conversation from where it
+began: the phone looks back up to 2 hours for a gap of 3 minutes without
+speech, as the NAS does between conversations, with Apple's speech detector
+rather than the NAS's, and the paused audio before it stays to review. Off
+turns the pendant's mic off in hardware and keeps nothing. If the app was
+paused at any time while the pendant was away, everything it stored then
+counts as paused; if it was off, none of it is kept.
 
 The pendant's single and double tap are set in the app (Pendant button): mark
 to keep the conversation around the tap, from 30 s before it to 30 s after
-you stop, even when it's short; mark to end the conversation there; pause or
-resume; mute or unmute; or nothing. Each confirms with its own buzz. Single
-tap defaults to keep, double tap to pause. Holding the button 3 s turns the
-pendant off. The NAS must be updated before the
+you stop, even when it's short; mark to end the conversation there; pause, or
+off (tapping either again switches back on); or nothing. Each confirms with
+its own buzz. Single tap defaults to keep, double tap to pause. Holding the
+button 3 s powers the pendant down. The NAS must be updated before the
 app whenever the upload format changes, as the update order above does.
 
 While recording, location fixes back off once the phone settles at a stay.

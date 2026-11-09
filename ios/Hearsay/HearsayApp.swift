@@ -31,8 +31,12 @@ final class Recorder {
         pause = Pause(root: support.appendingPathComponent("paused"), spool: spool, pendant: pendant)
         buttons = Buttons(pendant: pendant, pause: pause)
         uploader = Uploader(spool: spool)
-        location = Location { [spool, pause, pendant] in
-            pendant.muted ? nil : pause.paused ? pause.window : spool
+        location = Location { [spool, pause] in
+            switch pause.mode {
+            case .off: nil
+            case .paused: pause.window
+            case .on: spool
+            }
         }
 
         // Uploads cover a minute each; the NAS waits for 3 minutes without
@@ -102,13 +106,8 @@ struct StatusView: View {
                 Section {
                     header
                     HStack(spacing: 12) {
-                        control(pause.paused ? "Resume" : "Pause",
-                                symbol: pause.paused ? "play.fill" : "pause.fill", on: pause.paused) {
-                            if pause.paused { pause.resume() } else { pause.pause() }
-                        }
-                        control(pendant.muted ? "Unmute" : "Mute",
-                                symbol: pendant.muted ? "mic.fill" : "mic.slash.fill", on: pendant.muted) {
-                            pendant.setMuted(!pendant.muted)
+                        ForEach(Pause.Mode.allCases, id: \.self) { mode in
+                            control(mode.label, symbol: mode.symbol, on: pause.mode == mode) { pause.set(mode) }
                         }
                     }
                     .listRowSeparator(.hidden)
@@ -165,7 +164,7 @@ struct StatusView: View {
     }
 
     private var connected: Bool { pendant.state == "connected" }
-    private var live: Bool { connected && !pause.paused && !pendant.muted }
+    private var live: Bool { connected && pause.mode == .on }
 
     /// The pendant's own state, under the title that says what's happening.
     private var header: some View {
@@ -189,9 +188,11 @@ struct StatusView: View {
     }
 
     private var headline: String {
-        if pause.paused { return "Paused" }
-        if pendant.muted { return "Muted" }
-        return connected ? "Recording" : "Pendant disconnected"
+        switch pause.mode {
+        case .off: "Off"
+        case .paused: "Paused"
+        case .on: connected ? "Recording" : "Pendant disconnected"
+        }
     }
 
     /// Filled while its state is on, so the button shows the state too.
@@ -222,10 +223,11 @@ struct StatusView: View {
     }
 
     private var recordingStatus: String {
-        let mic = pendant.muted ? "Mic muted on the pendant, even out of range." : ""
-        guard pause.paused else { return pendant.muted ? mic : "Paused audio never reaches Hearsay." }
-        let paused = pause.keep ? "Paused audio is kept on this phone for 30 days." : "Paused audio is dropped as it arrives."
-        return [paused, mic].filter { !$0.isEmpty }.joined(separator: " ")
+        switch pause.mode {
+        case .off: "Mic off on the pendant, even out of range. Nothing is kept."
+        case .paused: "Kept on this phone for \(pause.retentionDays) days, never sent unless you upload it. Switching on mid-conversation sends it from where it began."
+        case .on: pause.lookback ?? "Everything the pendant hears reaches Hearsay."
+        }
     }
 
     private func batterySymbol(_ level: Int) -> String {
@@ -242,8 +244,26 @@ struct StatusView: View {
         let length = Duration.seconds(window.end.timeIntervalSince(window.start))
             .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .narrow, maximumUnitCount: 2))
         let size = ByteCountFormatter.string(fromByteCount: Int64(window.bytes), countStyle: .file)
-        let expires = window.end.addingTimeInterval(Pause.retention).formatted(.dateTime.month(.abbreviated).day())
+        let expires = window.end.addingTimeInterval(pause.retention).formatted(.dateTime.month(.abbreviated).day())
         return "\(length), \(size), deleted \(expires)"
+    }
+}
+
+extension Pause.Mode {
+    var label: String {
+        switch self {
+        case .off: "Off"
+        case .paused: "Paused"
+        case .on: "On"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .off: "mic.slash.fill"
+        case .paused: "pause.fill"
+        case .on: "mic.fill"
+        }
     }
 }
 

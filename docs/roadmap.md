@@ -171,6 +171,20 @@ hours late. Packets now go in download order, an away stretch starts when the
 pendant was last heard live, and the app saves when that was. 55 minutes
 from 10-07, where the pendant's clock was decades off, stay unplaced.
 
+Revised 2026-11-09, pause and mute: unpaused and muted had no use, and
+paused while muted kept nothing, so the app is on, paused or off (the mic
+off in hardware, nothing kept). Paused audio is always kept on the phone,
+deleted a set number of days after the pause ends (1 to 60, 30 to start).
+Switching from paused to on mid-conversation sends the conversation from
+where it began: the phone runs Apple's on-device speech classifier
+(SoundAnalysis, 3 s windows) back through the paused window, 10 minutes at a
+time and at most 2 hours, to a 3-minute gap without speech, and sends from
+10 s before the speech after it; the rest stays to review. On a synthetic
+window on the Mac it placed a conversation's start within 3 s, analysing 40
+minutes in 4 s. A NAS-side search with Silero would match the NAS's own
+boundaries, but paused audio would reach the NAS, and raw payloads can't be
+cut down.
+
 ## 10. Every turn attributed
 
 Turns too short to embed (under 2.5 s), or scoring between the owner and
@@ -415,9 +429,9 @@ NAS reads that as a reading. Activity, route changes and every
 state, with its confidence and reason, are records in the upload, so trips
 can be reconstructed from raw later. AirTags were left out: Find My has no
 public API. The state machine is ios/Hearsay/Movement.swift, tested on its
-own (`swift test` in ios/). Paused with paused audio kept on the phone, it
+own (`swift test` in ios/). Paused, it
 keeps tracking into the paused window, so its records reach the NAS only
-with the stretches the owner uploads. Walking only delays settling: precise fixes that
+with the stretches the owner sends. Walking only delays settling: precise fixes that
 keep agreeing for 10 minutes settle anyway (at lower confidence), so a
 party or a yoga class is a stay; not after driving, so a jam isn't.
 
