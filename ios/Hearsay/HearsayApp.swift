@@ -200,6 +200,7 @@ struct StatusView: View {
     private func control(_ title: String, symbol: String, on: Bool, action: @escaping () -> Void) -> some View {
         let button = Button(action: action) {
             Label(title, systemImage: symbol)
+                .labelStyle(.iconOnly)
                 .fontWeight(.medium)
                 .frame(maxWidth: .infinity)
         }
@@ -260,9 +261,9 @@ extension Pause.Mode {
 
     var symbol: String {
         switch self {
-        case .off: "mic.slash.fill"
+        case .off: "stop.fill"
         case .paused: "pause.fill"
-        case .on: "mic.fill"
+        case .on: "play.fill"
         }
     }
 }
