@@ -470,6 +470,13 @@ accuracy; older ones carry only the geofence radius, with no way to recover
 the original accuracy. The app offers both corrections on each conversation it lists
 for a place or a spot.
 
+From the operator's use (2026-11-10): naming a spot offers the places
+already named nearest first (by the closest of each one's spots), and each
+conversation the app lists for a place or a spot opens its page on the
+portal, in the app, to read and hear it: /places.json gives each one's
+conversation_id, and POST /login/app takes ?next= (a path on the portal,
+never another site) to land there.
+
 ## 14. Place as a hint for who is speaking
 
 Shelved 2026-10-28 with naming people (slice 5), its code removed. What was

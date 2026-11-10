@@ -368,8 +368,9 @@ thrown out.
 Each opens as its transcript in order, with who the stream says said each
 turn (or why it's left out) and where, and links to the conversations before
 and after it; tap a turn's time to play the
-conversation from there. To throw out turns, check them and press Throw out
-checked, or Throw out all for the whole conversation. All not me and All
+conversation from there. To throw out turns, check them, open Select
+multiple or discard at the bottom and press Throw out checked, or Throw out
+all for the whole conversation. There, All not me and All
 media check the turns Hearsay is sure of; those marked yellow (it couldn't
 tell who spoke, or it might be media, or the voice is close to yours) are
 left for you. Check between fills in a stretch from the first turn checked
