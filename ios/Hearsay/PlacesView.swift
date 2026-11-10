@@ -4,7 +4,7 @@ import SwiftUI
 /// The places the operator has named, on Apple's map, so places go to no one
 /// new: drag a named spot's pin to where the place really is, select it to
 /// resize the area it covers, or name a spot where the owner spent time. The portal (hearsay/portal.py) serves the
-/// spots and keeps the names; its Places page stays the way to hear a spot.
+/// spots and keeps the names; each conversation listed opens its page there, to read and hear it.
 struct PlacesView: View {
     struct Named: Identifiable {
         let id: Int
@@ -26,12 +26,17 @@ struct PlacesView: View {
 
     /// One recorded while the phone was at a place or spot: when, and how it
     /// began, to tell where it was; `readings` is the span of readings that
-    /// put it there (unix seconds), to correct them.
+    /// put it there (unix seconds), to correct them; `id` opens its page.
     struct Conversation: Decodable, Hashable {
+        let id: String?  // absent from an older portal
         let start: Date
         let end: Date
         let opening: String
         let readings: [Double]?
+
+        private enum CodingKeys: String, CodingKey {
+            case id = "conversation_id", start, end, opening, readings
+        }
     }
 
     /// The conversations at one named place, for its sheet.
@@ -70,7 +75,7 @@ struct PlacesView: View {
         }
         .task { if !loaded { await load() } }
         .sheet(item: $naming) { spot in
-            NameSpot(spot: spot, names: placeNames) { fields in
+            NameSpot(spot: spot, names: placeNames(nearest: spot.coordinate)) { fields in
                 naming = nil
                 Task { await send(fields) }
             }
@@ -132,6 +137,17 @@ struct PlacesView: View {
     }
 
     private var placeNames: [String] { Array(Set(named.map(\.name))).sorted() }
+
+    /// Each named place, nearest first: by the closest of its spots, as saved.
+    private func placeNames(nearest coordinate: CLLocationCoordinate2D) -> [String] {
+        let here = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        var nearest: [String: CLLocationDistance] = [:]
+        for spot in named {
+            let distance = here.distance(from: CLLocation(latitude: spot.coordinate.latitude, longitude: spot.coordinate.longitude))
+            nearest[spot.name] = min(nearest[spot.name] ?? .infinity, distance)
+        }
+        return nearest.sorted { ($0.value, $0.key) < ($1.value, $1.key) }.map(\.key)
+    }
 
     /// The selected spot's radius, on a slider that spends as much travel on
     /// 25-200 m as on 200-2000 m.
@@ -357,12 +373,14 @@ struct PlacesView: View {
 }
 
 /// What was recorded at a spot, then: name it, give it to a place already
-/// named (another of its spots), or say it isn't a place.
+/// named (another of its spots, offered nearest first), or say it isn't a place.
 private struct NameSpot: View {
     let spot: PlacesView.Unnamed
     let names: [String]
     let send: ([(String, String)]) -> Void
     @State private var name = ""
+    @State private var opened: PlacesView.Conversation?
+    @State private var detent = PresentationDetent.medium
 
     var body: some View {
         NavigationStack {
@@ -386,12 +404,18 @@ private struct NameSpot: View {
                 } footer: {
                     Text("\(spot.minutes) minutes here. Reusing a name adds this spot to that place. The portal's Places page has clips heard here.")
                 }
-                Section("Conversations Here") {
+                Section {
                     if spot.conversations.isEmpty {
                         Text("None recorded here.").foregroundStyle(.secondary)
                     }
                     ForEach(spot.conversations, id: \.self) { conversation in
-                        ConversationRow(conversation: conversation, here: nil, names: names, correct: send)
+                        ConversationRow(conversation: conversation, here: nil, names: names, correct: send, open: open)
+                    }
+                } header: {
+                    Text("Conversations Here")
+                } footer: {
+                    if spot.conversations.contains(where: { $0.id != nil }) {
+                        Text("Tap one to read it in the portal.")
                     }
                 }
                 Section {
@@ -401,6 +425,7 @@ private struct NameSpot: View {
                 }
             }
             .navigationTitle("Name This Spot")
+            .navigationDestination(item: $opened) { ConversationPage(conversation: $0) }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -410,10 +435,15 @@ private struct NameSpot: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium, .large], selection: $detent)
     }
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private func open(_ conversation: PlacesView.Conversation) {
+        opened = conversation
+        detent = .large
+    }
 
     private func save() {
         guard !trimmed.isEmpty else { return }
@@ -427,46 +457,82 @@ private struct PlaceVisits: View {
     let conversations: [PlacesView.Conversation]
     let names: [String]
     let correct: ([(String, String)]) -> Void
+    @State private var opened: PlacesView.Conversation?
+    @State private var detent = PresentationDetent.medium
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
                     ForEach(conversations, id: \.self) { conversation in
-                        ConversationRow(conversation: conversation, here: name, names: names, correct: correct)
+                        ConversationRow(conversation: conversation, here: name, names: names, correct: correct) {
+                            opened = $0
+                            detent = .large
+                        }
                     }
                 } footer: {
-                    Text("If the phone put one here wrongly, tap \u{22EF} beside it: it wasn\u{2019}t anywhere named, or was at another place. It stays corrected however the place\u{2019}s area changes.")
+                    Text("Tap one to read it in the portal. If the phone put one here wrongly, tap \u{22EF} beside it: it wasn\u{2019}t anywhere named, or was at another place. It stays corrected however the place\u{2019}s area changes.")
                 }
             }
             .navigationTitle(name)
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(item: $opened) { ConversationPage(conversation: $0) }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium, .large], selection: $detent)
     }
 }
 
-/// When and how it began; its menu corrects the readings that put it
-/// here: they were wrong, or were really at another named place.
+/// A conversation's own page on the portal: its transcript and audio, to
+/// read and hear it, and the portal's edits.
+private struct ConversationPage: View {
+    let conversation: PlacesView.Conversation
+
+    var body: some View {
+        Group {
+            if let portal = Settings.portalURL, let id = conversation.id {
+                PortalView(home: portal, path: "/conversations/\(id)")
+            } else {
+                ContentUnavailableView("No Portal Address", systemImage: "text.bubble",
+                                       description: Text("Enter the portal URL and token in the Recorder tab's Settings, under Server."))
+            }
+        }
+        .navigationTitle(conversation.start.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()))
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// When and how it began, which opens its page (from a portal that gives its
+/// id); its menu corrects the readings that put it here: they were wrong, or
+/// were really at another named place.
 private struct ConversationRow: View {
     let conversation: PlacesView.Conversation
     let here: String?
     let names: [String]
     let correct: ([(String, String)]) -> Void
+    let open: (PlacesView.Conversation) -> Void
 
     var body: some View {
         HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(conversation.start.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
-                     + " – " + conversation.end.formatted(date: .omitted, time: .shortened))
-                    .font(.subheadline.weight(.medium))
-                if !conversation.opening.isEmpty {
-                    Text("\u{201C}\(conversation.opening)\u{201D}")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(3)
+            // Borderless, so only this opens it and the menu beside it stays its own.
+            Button { open(conversation) } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(conversation.start.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
+                         + " – " + conversation.end.formatted(date: .omitted, time: .shortened))
+                        .font(.subheadline.weight(.medium))
+                    if !conversation.opening.isEmpty {
+                        Text("\u{201C}\(conversation.opening)\u{201D}")
+                            .font(.callout)
+                            .foregroundStyle(Color.secondary)
+                            .lineLimit(3)
+                    }
                 }
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
             }
+            .buttonStyle(.borderless)
+            .disabled(conversation.id == nil)
+            .accessibilityHint(conversation.id == nil ? "" : "Opens it in the portal")
             Spacer(minLength: 8)
             if let span = conversation.readings, span.count == 2 {
                 Menu {

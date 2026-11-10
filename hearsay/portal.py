@@ -4,10 +4,11 @@ Listens only on the LAN and tailnet addresses (install/compose.yaml), never
 the public internet. Login is a plain HTML form, not an HTTP auth
 dialog, so password managers can fill it; sessions are HMAC-signed cookies.
 The iPhone app logs in instead with the capture token it already holds
-(POST /login/app, bearer): the portal shows in its Tag tab, and whoever
-holds that token can already send Hearsay audio. The app's own Places map
-sends the token on each request instead: GET /places.json, and POST /places
-with the same fields as the page's forms.
+(POST /login/app, bearer, with ?next= the page to land on): the portal
+shows in its Tag tab, and a conversation listed on its Places map opens its
+page; whoever holds that token can already send Hearsay audio. The app's own
+Places map sends the token on each request instead: GET /places.json, and
+POST /places with the same fields as the page's forms.
 
 Hearsay says only whether the owner spoke (2026-10-28). The front page plays
 the turns it couldn't decide, and those that sound like the media the operator
@@ -164,7 +165,8 @@ ORDER BY ca.zero_at DESC, t.start DESC
 STYLE = """
 :root { color-scheme: light dark; --fg: #111; --bg: #fff; --muted: #666; --line: #ddd; --accent: #2458d6; --unsure: #e0b000; --unsure-text: #8a6d00; }
 @media (prefers-color-scheme: dark) { :root { --fg: #eee; --bg: #121212; --muted: #999; --line: #333; --accent: #7fa4ff; --unsure: #d4a800; --unsure-text: #e8c547; } }
-body { font: 18px/1.4 system-ui, sans-serif; color: var(--fg); background: var(--bg); margin: 0 auto; max-width: 40rem; padding: 1rem; }
+body { font: 18px/1.4 system-ui, sans-serif; color: var(--fg); background: var(--bg); margin: 0 auto; max-width: 40rem; padding: 1rem;
+       overflow-wrap: anywhere; }
 a { color: var(--accent); }
 .muted { color: var(--muted); font-size: 0.9em; }
 ul { list-style: none; padding: 0; }
@@ -221,6 +223,8 @@ section h2 { margin-bottom: 0.2rem; }
 .forget select { font: inherit; padding: 0.4rem; flex: 1; min-width: 0; }
 .forget details .row { align-items: center; margin-bottom: 0.3rem; }
 .forget details .row button, .forget details .row input { flex: 1; margin-top: 0; min-width: 0; }
+.forget details > input { margin-bottom: 0.3rem; }
+.forget details .picks { align-items: stretch; }
 """
 
 # Tags a clip without leaving the page, and collapses it to an Undo button that
@@ -254,11 +258,12 @@ document.addEventListener('submit', async event => {
 
 # Plays the conversation from a turn's time, and marks the turn being heard.
 # Without scripts a turn's time links to its own clip.
-TRANSCRIPT_HELP = ("Tap a time to play from there. To throw out turns, check them: All not me and All media check"
-                   " those Hearsay is sure of, never the ones marked yellow, and Check between fills in a stretch"
-                   " from the first checked to the last. Under Tag or place, tag the checked turns (Me, Other, Mic,"
-                   " Media, Music or Noise), or put the conversation at a place from the first checked turn to its"
-                   " end (from its start if none is checked).")
+TRANSCRIPT_HELP = ("Tap a time to play from there. Under Select multiple or discard, All not me and All media check"
+                   " the turns Hearsay is sure of, never the ones marked yellow, Check between fills in a stretch"
+                   " from the first checked to the last, and Throw out checked throws out the checked turns. Under"
+                   " Tag or place, tag the checked turns (Me, Other, Mic, Media, Music or Noise), or put the"
+                   " conversation at a place from the first checked turn to its end (from its start if none is"
+                   " checked).")
 
 # Each conversation has its own player, and one playing stops the others.
 TRANSCRIPT_SCRIPT = """
@@ -626,11 +631,13 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Pat
         if not app_token or not hmac.compare_digest(sent.encode(), f"Bearer {app_token}".encode()):
             await asyncio.sleep(1)
             return Response(status_code=401)
-        return session()
+        # Straight on to the page the app opened (a place's conversation); never another site.
+        to = request.query_params.get("next", "/")
+        return session(to if to.startswith("/") and not to.startswith(("//", "/\\")) else "/")
 
-    def session() -> Response:
+    def session(to: str = "/") -> Response:
         expires = int(time.time()) + SESSION_SECONDS
-        response = RedirectResponse("/", status_code=303)
+        response = RedirectResponse(to, status_code=303)
         response.set_cookie(COOKIE, f"{expires}.{sign(expires)}", max_age=SESSION_SECONDS,
                             httponly=True, samesite="strict")
         return response
@@ -911,14 +918,16 @@ conversation(s), newest first, as of the last reprocess. Tap a day to read it th
   <button type="submit" formaction="/conversations/place">Place from checked</button></div>
   <datalist id="{html.escape(conversation_id)}-places">{place_options}</datalist>
   </details>
-  <input name="reason" maxlength="{REASON_CHARACTERS}" autocomplete="off"
-         placeholder="Why (optional; Idea Machine sees it)" aria-label="Why">
+  <details><summary>Select multiple or discard</summary>
   <div class="row picks" hidden><button type="button" value="notme">All not me</button>
   <button type="button" value="media">All media</button>
   <button type="button" value="between">Check between</button>
   <button type="button" value="none">None</button></div>
+  <input name="reason" maxlength="{REASON_CHARACTERS}" autocomplete="off"
+         placeholder="Why (optional; Idea Machine sees it)" aria-label="Why">
   <div class="row"><button type="submit" name="action" value="checked">Throw out checked</button>
   <button type="submit" name="action" value="whole">Throw out all</button></div>
+  </details>
 </div>
 </form>
 </section>"""
@@ -1321,10 +1330,11 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
             db.close()
 
         def entry(cid: str, start: float, end: float, at: list[float]) -> dict:
-            # When and how it began, to tell from what was said where it was;
-            # "readings" is the span of the readings that put it there, to correct.
-            return {"start": start, "end": end, "opening": opening.get(cid, "")[:OPENING_CHARACTERS],
-                    "readings": [min(at), max(at)]}
+            # When and how it began, to tell from what was said where it was, and
+            # its id, to open its page; "readings" is the span of the readings
+            # that put it there, to correct.
+            return {"conversation_id": cid, "start": start, "end": end,
+                    "opening": opening.get(cid, "")[:OPENING_CHARACTERS], "readings": [min(at), max(at)]}
 
         def at_spot(times: list[float]) -> list[dict]:
             found = []

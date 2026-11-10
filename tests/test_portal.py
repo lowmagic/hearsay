@@ -170,6 +170,13 @@ def test_the_app_logs_in_with_the_capture_token(portal, tmp_path):
     assert response.status_code == 303
     assert client.get("/", follow_redirects=False).status_code == 200
 
+    # Straight on to a page the app opens, a place's conversation; never to another site.
+    for asked, landed in [("/conversations/c1", "/conversations/c1"), ("//evil.example", "/"),
+                          ("/\\evil.example", "/"), ("https://evil.example/", "/")]:
+        response = client.post("/login/app", params={"next": asked}, headers={"Authorization": "Bearer capture-token"},
+                               follow_redirects=False)
+        assert response.headers["location"] == landed
+
     # With no token set up, an empty one doesn't match it.
     tokenless = TestClient(create_app(db_path, tmp_path / "audio", labels_dir, labels_dir / "stream", "me", "correct horse", "k" * 64))
     empty = {"Authorization": "Bearer "}
@@ -228,9 +235,10 @@ def test_a_spot_where_the_owner_spent_time_can_be_named(portal):
     page = client.get("/places").text
     assert "About 5 min" in page and "maps.apple.com/?ll=-26.12000,80.14000" in page
     assert page.count("<audio") == 3  # clips heard there, to tell where it is
-    # The app's map: the conversations there, each with its first words, to tell by what was said.
+    # The app's map: the conversations there, each with its first words, to tell by what was said, and its id, to open it.
     [spot] = client.get("/places.json", headers={"Authorization": "Bearer capture-token"}).json()["unnamed"]
-    assert [(c["start"], c["opening"]) for c in spot["conversations"]] == [(1_767_225_590, "synthetic synthetic")]
+    assert [(c["conversation_id"], c["start"], c["opening"]) for c in spot["conversations"]] == \
+        [("c1", 1_767_225_590, "synthetic synthetic")]
 
     client.post("/places", data={"action": "name", "name": "Back Room", "latitude": "-26.12", "longitude": "80.14"})
     page = client.get("/places").text

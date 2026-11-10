@@ -39,10 +39,13 @@ struct TagView: View {
     }
 }
 
-private struct PortalView: UIViewRepresentable {
+/// The portal in a web view, logged in with the capture token, opened at
+/// `path`: home for the Tag tab, a conversation's page from the Places map.
+struct PortalView: UIViewRepresentable {
     let home: URL
+    var path = "/"
 
-    func makeCoordinator() -> Coordinator { Coordinator(home: home) }
+    func makeCoordinator() -> Coordinator { Coordinator(home: home, path: path) }
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -64,25 +67,31 @@ private struct PortalView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var home: URL
+        let path: String
 
         // Set when the portal refused the token, so its own login page shows.
         private var tokenRefused = false
 
-        init(home: URL) { self.home = home }
+        init(home: URL, path: String) {
+            self.home = home
+            self.path = path
+        }
 
         func open(_ view: WKWebView) {
             tokenRefused = false
             logIn(view)
         }
 
-        /// The portal answers with a session cookie and a redirect home.
+        /// The portal answers with a session cookie and a redirect to `path`
+        /// (home, from a portal that doesn't know where to send it).
         private func logIn(_ view: WKWebView) {
             guard let token = Settings.token else {
-                view.load(URLRequest(url: home))
+                view.load(URLRequest(url: URL(string: path, relativeTo: home)?.absoluteURL ?? home))
                 return
             }
             // A stalled connection shows the error page instead of a blank one.
-            var request = URLRequest(url: home.appendingPathComponent("login/app"), timeoutInterval: 20)
+            let login = home.appendingPathComponent("login/app").appending(queryItems: [URLQueryItem(name: "next", value: path)])
+            var request = URLRequest(url: login, timeoutInterval: 20)
             request.httpMethod = "POST"
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             view.load(request)
