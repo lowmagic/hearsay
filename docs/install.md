@@ -108,8 +108,11 @@ pendant's clock.
 
 The app is on, paused or off. On, everything reaches the NAS. Paused, nothing
 does: it's kept on the phone, where a paused stretch can be played, cropped to
-one selection and uploaded, or deleted, and it's deleted on its own a number
-of days after the pause ends (30 to start; Settings, Paused audio). Switching
+one selection and uploaded, shared as a WAV (AirDrop or Files; the copy is
+yours, and Hearsay never deletes it), or deleted, and it's deleted on its own a number
+of days after the pause ends (30 to start; Settings, Paused audio). A paused
+stretch with 5 seconds of audio or less is deleted as soon as the pause
+ends, and nothing of it is sent. Switching
 from paused to on mid-conversation sends that conversation from where it
 began: the phone looks back up to 2 hours for a gap of 3 minutes without
 speech, as the NAS does between conversations, with Apple's speech detector

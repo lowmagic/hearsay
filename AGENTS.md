@@ -32,6 +32,10 @@ change to the stream's format or meaning updates it in the same change.
   Omi webhook receiver and its Cloudflare tunnel were retired in 2026-10)
   and never goes to third-party services or downstream consumers.
   A work machine is never used for capture and never holds audio.
+  The one way out is the operator's own: the app's Share This Stretch
+  hands a WAV of paused audio to AirDrop or Files (messaging, mail, social
+  and the clipboard are hidden). That copy is theirs, outside Hearsay's
+  boundary and retention; Hearsay never shares audio on its own.
 - Audio, the owner's and everyone else's, is deleted 60 days on: raw
   uploads and imports 60 days after their own audio ends, a conversation's
   WAV and transcripts 60 days after the conversation ends, decoded audio once

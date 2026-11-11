@@ -76,6 +76,15 @@ final class Pendant: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
     private var storedTotal: UInt32 = 0
     private var storedReceived = 0
     private var storedThisMinute = 0
+    /// The last packets kept, to drop the same ones sent again: after a
+    /// download the pendant reports the last few as still stored and sends
+    /// them again, in rounds until it catches up. On 2026-11-10 that was 11
+    /// rounds of 1 to 9 packets, each byte for byte one already downloaded,
+    /// and paused, each round was a window of its own. By sequence number and
+    /// bytes, as the NAS keeps a packet once (hearsay/capture.py stored_runs).
+    private var recentStored: [(seq: UInt64, packet: Data)] = []
+    private static let recentStoredCount = 64
+    private var storedRepeated = 0
 
     // For the once-a-minute summary.
     private var packets = 0
@@ -438,8 +447,8 @@ final class Pendant: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
             guard value.count >= 13 else { return }
             storedSeq = bigEndian(value, 1, 8)
             storedTotal = UInt32(bigEndian(value, 9, 4))
-            storedBuffer = Data()
             storedReceived = 0
+            storedRepeated = 0
             pause?.beginDownload(awaySince: awaySince)
             let unmutedAt = UserDefaults.standard.object(forKey: Self.unmutedAtKey) as? Double
             downloadMuted = muted || (awaySince.map { (unmutedAt ?? 0) >= $0.timeIntervalSince1970 } ?? false)
@@ -450,7 +459,7 @@ final class Pendant: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
             spoolStoredPackets()
         case 0x04:  // done: status u8, next seq u64
             let status = value.count > 1 ? value[value.startIndex + 1] : 0
-            log.info("stored audio download done: status \(status), \(self.storedReceived) packets")
+            log.info("stored audio download done: status \(status), \(self.storedReceived) packets, \(self.storedRepeated) of them already kept")
             endDownload()
             if status == 0 {
                 stored = "downloaded \(storedReceived) stored packets at \(Date().formatted(date: .omitted, time: .shortened))"
@@ -476,11 +485,18 @@ final class Pendant: NSObject, ObservableObject, CBCentralManagerDelegate, CBPer
         guard let codec = codec?.first else { return }
         let away = awaySince?.timeIntervalSince1970 ?? 0
         while storedBuffer.count >= Self.storedPacketBytes {
-            var record = Data([codec])
-            withUnsafeBytes(of: storedSeq.littleEndian) { record.append(contentsOf: $0) }
-            withUnsafeBytes(of: away.bitPattern.littleEndian) { record.append(contentsOf: $0) }
-            record.append(storedBuffer.prefix(Self.storedPacketBytes))
-            if !(muted || downloadMuted) { pause?.storedTarget?.append(kind: Spool.stored, data: record) }
+            let packet = Data(storedBuffer.prefix(Self.storedPacketBytes))
+            if recentStored.contains(where: { $0.seq == storedSeq && $0.packet == packet }) {
+                storedRepeated += 1
+            } else {
+                var record = Data([codec])
+                withUnsafeBytes(of: storedSeq.littleEndian) { record.append(contentsOf: $0) }
+                withUnsafeBytes(of: away.bitPattern.littleEndian) { record.append(contentsOf: $0) }
+                record.append(packet)
+                if !(muted || downloadMuted) { pause?.storedTarget?.append(kind: Spool.stored, data: record) }
+                recentStored.append((storedSeq, packet))
+                if recentStored.count > Self.recentStoredCount { recentStored.removeFirst() }
+            }
             storedBuffer = Data(storedBuffer.dropFirst(Self.storedPacketBytes))
             storedSeq += 1
             storedReceived += 1
