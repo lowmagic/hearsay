@@ -11,7 +11,9 @@ import AVFoundation
 /// NAS still decodes the kept records itself.
 ///
 /// The decoded audio is a WAV in the app's temporary directory, which is
-/// never backed up; it's deleted when the window is closed.
+/// never backed up; it's deleted when the window is closed. A stretch shared
+/// from it (`exported`) is a WAV of its own there, deleted once the share
+/// sheet closes.
 final class WindowAudio {
     struct Run {
         let wallStart: Double
@@ -61,6 +63,30 @@ final class WindowAudio {
     /// uploads.
     func cropped(from: Double, to: Double) -> [Data] {
         Self.uploads(records, codec: nil, from: wallTime(from).timeIntervalSince1970, to: wallTime(to).timeIntervalSince1970)
+    }
+
+    /// The decoded audio from `from` to `to` (positions), as a WAV named after
+    /// when it begins, in a folder of its own in the temporary directory
+    /// (`removeLeftovers` clears it after a crash). Silence between runs stays
+    /// skipped, as in the player.
+    func exported(from: Double, to: Double) throws -> URL {
+        let named = DateFormatter()
+        named.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("window-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("Hearsay \(named.string(from: wallTime(from))).wav")
+        let source = try AVAudioFile(forReading: wav, commonFormat: .pcmFormatInt16, interleaved: true)
+        let out = try AVAudioFile(forWriting: url, settings: source.fileFormat.settings, commonFormat: .pcmFormatInt16,
+                                  interleaved: true)
+        let end = min(AVAudioFramePosition(to * Self.sampleRate), source.length)
+        source.framePosition = max(0, AVAudioFramePosition(from * Self.sampleRate))
+        let buffer = AVAudioPCMBuffer(pcmFormat: source.processingFormat, frameCapacity: 1 << 16)!
+        while source.framePosition < end {
+            try source.read(into: buffer, frameCount: AVAudioFrameCount(min(AVAudioFramePosition(buffer.frameCapacity),
+                                                                            end - source.framePosition)))
+            try out.write(from: buffer)
+        }
+        return url
     }
 
     /// The records from `start` to `end` (wall times), as uploads. Each

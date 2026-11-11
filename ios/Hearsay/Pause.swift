@@ -21,9 +21,10 @@ import Foundation
 /// already uploads: keeping one moves them into the upload spool, and the NAS
 /// places them by their own times. Where the owner was goes in the window too
 /// (Location), so a stretch uploaded later still gets its places, and nothing
-/// from a pause reaches the NAS unless uploaded. A window with no audio (the
-/// pendant away all along) is deleted as soon as it ends: there's nothing in
-/// it to hear or keep.
+/// from a pause reaches the NAS unless uploaded. A window whose audio lasts
+/// `tooShort` or less (none at all when the pendant was away all along, or a
+/// pause undone at once) is deleted as soon as it ends, without looking back
+/// through it: there's too little in it to hear or keep.
 ///
 /// Audio the pendant stored while away is downloaded on reconnect. If the
 /// app was paused at any time while the pendant was away, all of it is
@@ -39,6 +40,8 @@ final class Pause: ObservableObject {
     private static let retentionKey = "pausedRetentionDays"
     private static let windowKey = "pausedWindow"
     private static let leftPausedAtKey = "resumedAt"
+    /// Paused audio this long or shorter isn't kept.
+    static let tooShort: TimeInterval = 5
 
     struct Window: Identifiable {
         let dir: URL
@@ -83,7 +86,7 @@ final class Pause: ObservableObject {
         pendant.pause = self
         WindowAudio.removeLeftovers()
         expire()
-        for empty in windows where !Self.hasAudio(empty.dir) { delete(empty) }
+        for short in windows where Self.isShort(short.dir) { delete(short) }
     }
 
     func set(_ new: Mode) {
@@ -101,7 +104,14 @@ final class Pause: ObservableObject {
         if old == .paused {
             UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.leftPausedAtKey)
             pendant.route(to: spool)
-            if new == .on, let window { lookBack(window) }
+            if new == .on, let window {
+                window.seal()
+                if downloadPaused || !Self.isShort(window.dir) {
+                    lookBack(window)
+                } else {
+                    lookback = "Paused \(Int(Self.tooShort)) seconds or less: nothing was sent, and that audio is deleted."
+                }
+            }
             if !downloadPaused { endWindow() }
         }
         if (old == .off) != (new == .off) { pendant.setMuted(new == .off) }
@@ -197,24 +207,33 @@ final class Pause: ObservableObject {
         splitting.insert(dir)
         lookback = "Looking for where this conversation began."
         DispatchQueue.global(qos: .utility).async {
-            let outcome: String
+            // What happened, and what's left in the window: kept to review,
+            // unless there's too little left to keep.
+            let outcome: String, rest: (kept: String, deleted: String)
             do {
                 if let split = try Lookback.split(files, now: now) {
                     try Self.apply(split, spool: spoolDir)
                     let began = Date(timeIntervalSince1970: split.began).formatted(date: .omitted, time: .shortened)
                     log.info("sent the conversation from \(began) out of paused window \(dir.lastPathComponent)")
-                    outcome = "Sent this conversation from \(began), when it began; the paused audio before it is kept to review."
+                    outcome = "Sent this conversation from \(began), when it began"
+                    rest = ("the paused audio before it is kept to review", "the paused audio before it was too short to keep")
                 } else {
-                    outcome = "No conversation was going on; the paused audio is kept to review."
+                    outcome = "No conversation was going on"
+                    rest = ("the paused audio is kept to review", "the paused audio was too short to keep")
                 }
             } catch {
                 log.error("looking back through paused window \(dir.lastPathComponent) failed: \(error)")
-                outcome = "Couldn't find where this conversation began (\(error.localizedDescription)); all of the paused audio is kept to review."
+                outcome = "Couldn't find where this conversation began (\(error.localizedDescription))"
+                rest = ("all of the paused audio is kept to review", "the paused audio was too short to keep")
             }
             DispatchQueue.main.async {
                 self.splitting.remove(dir)
-                if self.window?.dir != dir && !Self.hasAudio(dir) { try? FileManager.default.removeItem(at: dir) }
-                self.lookback = outcome
+                var left = rest.kept
+                if self.window?.dir != dir && Self.isShort(dir) {
+                    try? FileManager.default.removeItem(at: dir)
+                    left = rest.deleted
+                }
+                self.lookback = "\(outcome); \(left)."
                 self.refresh()
             }
         }
@@ -273,8 +292,8 @@ final class Pause: ObservableObject {
 
     private func endWindow() {
         window?.seal()
-        if let ended = window?.dir, !splitting.contains(ended), !Self.hasAudio(ended) {
-            log.info("paused window \(ended.lastPathComponent) has no audio; deleting it")
+        if let ended = window?.dir, !splitting.contains(ended), Self.isShort(ended) {
+            log.info("paused window \(ended.lastPathComponent) has \(Int(Self.tooShort)) s of audio or less; deleting it")
             try? FileManager.default.removeItem(at: ended)
         }
         window = nil
@@ -282,12 +301,25 @@ final class Pause: ObservableObject {
         refresh()
     }
 
-    /// Stops at the first audio record, so a window with audio costs little.
-    private static func hasAudio(_ dir: URL) -> Bool {
-        let files = (try? Spool(dir: dir).pending()) ?? []
-        return files.contains { file in
-            ((try? Spool.records(in: file)) ?? []).contains { $0.kind == Spool.audio || $0.kind == Spool.stored }
+    /// Whether a window's audio lasts `tooShort` or less, both from its first
+    /// sound to its last and in total: stored audio whose pendant clock was
+    /// wrong can look short by its times alone. No audio is short. Stops
+    /// reading once it's longer, so a long window costs little.
+    private static func isShort(_ dir: URL) -> Bool {
+        var codec: UInt8?, first = Double.infinity, last = -Double.infinity, total = 0.0
+        for file in (try? Spool(dir: dir).pending()) ?? [] {
+            let records = (try? Spool.records(in: file)) ?? []
+            for frame in WindowAudio.frames(records, codec: codec) {
+                guard let samples = WindowAudio.frameSamples[frame.codec] else { continue }
+                let length = Double(samples) / WindowAudio.sampleRate
+                first = min(first, frame.end - length)
+                last = max(last, frame.end)
+                total += length
+            }
+            if max(last - first, total) > tooShort { return false }
+            codec = records.last { $0.kind == Spool.connected }?.data.first ?? codec
         }
+        return true
     }
 
     /// nil (so paused audio is dropped) if the window can't be made.

@@ -226,7 +226,7 @@ struct StatusView: View {
     private var recordingStatus: String {
         switch pause.mode {
         case .off: "Mic off on the pendant, even out of range. Nothing is kept."
-        case .paused: "Kept on this phone for \(pause.retentionDays) days, never sent unless you upload it. Switching on mid-conversation sends it from where it began."
+        case .paused: "Kept on this phone for \(pause.retentionDays) days, never sent unless you upload it; \(Int(Pause.tooShort)) seconds or less isn't kept. Switching on mid-conversation sends it from where it began."
         case .on: pause.lookback ?? "Everything the pendant hears reaches Hearsay."
         }
     }

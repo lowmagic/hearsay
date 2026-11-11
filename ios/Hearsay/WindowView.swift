@@ -3,8 +3,9 @@ import Combine
 import SwiftUI
 
 /// Listen to a paused window, then upload one stretch of it (deleting the
-/// rest) or delete it all. Positions are seconds of audio, skipping silence;
-/// labels show the time of day.
+/// rest), share a stretch as a WAV (deleting nothing), or delete it all.
+/// Positions are seconds of audio, skipping silence; labels show the time of
+/// day.
 struct WindowView: View {
     let window: Pause.Window
     @ObservedObject var pause: Pause
@@ -20,12 +21,18 @@ struct WindowView: View {
     @State private var to = 0.0
     @State private var confirmUpload = false
     @State private var confirmDelete = false
+    @State private var exporting = false
+    /// The WAV being shared, kept until the share sheet has closed.
+    @State private var exported: URL?
+    @State private var sharing = false
+    @State private var exportFailed: String?
     private let tick = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Form {
             if let audio, audio.duration > 0 {
-                editor(duration: audio.duration, clock: { clock(audio, $0) }, upload: { uploadSelection(audio) })
+                editor(duration: audio.duration, clock: { clock(audio, $0) }, upload: { uploadSelection(audio) },
+                       share: { shareSelection(audio) })
             } else if let failed {
                 ContentUnavailableView("Can't Play This Window", systemImage: "exclamationmark.triangle",
                                        description: Text(failed))
@@ -54,6 +61,13 @@ struct WindowView: View {
             player?.stop()
             audio?.close()
         }
+        .sheet(isPresented: $sharing, onDismiss: removeExported) {
+            if let exported { ShareSheet(file: exported) { sharing = false } }
+        }
+        .alert("Couldn't Share This Stretch", isPresented: Binding { exportFailed != nil } set: { if !$0 { exportFailed = nil } }) {
+        } message: {
+            Text(exportFailed ?? "")
+        }
         .onReceive(tick) { _ in
             guard let player, playing else { return }
             position = player.currentTime
@@ -64,7 +78,8 @@ struct WindowView: View {
     /// The player, then the stretch to keep. `clock` labels a position with
     /// its time of day.
     @ViewBuilder
-    private func editor(duration: Double, clock: @escaping (Double) -> String, upload: @escaping () -> Void) -> some View {
+    private func editor(duration: Double, clock: @escaping (Double) -> String, upload: @escaping () -> Void,
+                        share: @escaping () -> Void) -> some View {
         Section {
             VStack(spacing: 16) {
                 Text(clock(position))
@@ -134,6 +149,20 @@ struct WindowView: View {
                 Button("Upload", action: upload)
             }
         }
+
+        Section {
+            Button(action: share) {
+                if exporting {
+                    ProgressView().frame(maxWidth: .infinity)
+                } else {
+                    Label("Share This Stretch", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .disabled(to <= from || exporting)
+        } footer: {
+            Text("A WAV of \(clock(from))–\(clock(to)), by AirDrop or to Files. Nothing is deleted, and the copy is yours: Hearsay doesn't delete it later.")
+        }
     }
 
     /// One end of the stretch: its time, a button to move it to the playhead,
@@ -200,6 +229,31 @@ struct WindowView: View {
         dismiss()
     }
 
+    private func shareSelection(_ audio: WindowAudio) {
+        stop()
+        exporting = true
+        let from = from, to = to
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result { try audio.exported(from: from, to: to) }
+            DispatchQueue.main.async {
+                exporting = false
+                switch result {
+                case .success(let url):
+                    exported = url
+                    sharing = true
+                case .failure(let error): exportFailed = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    /// The shared WAV's folder, once the share sheet has closed.
+    private func removeExported() {
+        guard let exported else { return }
+        try? FileManager.default.removeItem(at: exported.deletingLastPathComponent())
+        self.exported = nil
+    }
+
     private func clock(_ audio: WindowAudio, _ position: Double) -> String {
         audio.wallTime(position).formatted(date: .omitted, time: .standard)
     }
@@ -207,4 +261,26 @@ struct WindowView: View {
     private func minutes(_ seconds: Double) -> String {
         Duration.seconds(max(seconds, 0)).formatted(.time(pattern: .minuteSecond))
     }
+}
+
+/// iOS's share sheet for a stretch's WAV, without the ways out that put it
+/// on someone else's servers or devices: messages, mail, social networks,
+/// the clipboard (Universal Clipboard reaches other devices). AirDrop and
+/// Save to Files stay; other apps' share extensions can't be hidden.
+private struct ShareSheet: UIViewControllerRepresentable {
+    let file: URL
+    let done: () -> Void
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let sheet = UIActivityViewController(activityItems: [file], applicationActivities: nil)
+        sheet.excludedActivityTypes = [
+            .message, .mail, .postToFacebook, .postToTwitter, .postToWeibo, .postToTencentWeibo, .postToFlickr,
+            .postToVimeo, .copyToPasteboard, .assignToContact, .print, .addToReadingList, .openInIBooks, .markupAsPDF,
+            .sharePlay, .collaborationInviteWithLink, .collaborationCopyLink,
+        ]
+        sheet.completionWithItemsHandler = { _, _, _, _ in done() }
+        return sheet
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
