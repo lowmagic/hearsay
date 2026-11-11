@@ -779,13 +779,8 @@ def test_a_spot_that_isnt_a_place_stops_being_offered(portal):
     assert "About 5 min" in client.get("/places").text
 
 
-def test_words_wait_in_a_draft_and_update_commits_them_with_lattice_s_all_at_once(portal, tmp_path):
-    _, db_path, labels_dir = portal
-    vocab = tmp_path / "vocab.json"
-    vocab.write_text(json.dumps({"format_version": 1, "terms": [
-        {"term": "gnomon", "source": "repair", "heard_as": "no man"}, {"term": "Gutenberg", "source": "archive"}]}))
-    client = TestClient(create_app(db_path, tmp_path / "audio", labels_dir, labels_dir / "stream", "me", "correct horse", "k" * 64,
-                                   vocab_path=vocab))
+def test_words_wait_in_a_draft_and_update_commits_what_the_page_showed(portal):
+    client, _, labels_dir = portal
     log_in(client)
 
     client.post("/words", data={"action": "save", "words": "  Xanthe\n\nisotherm\nXanthe\n"})
@@ -793,24 +788,17 @@ def test_words_wait_in_a_draft_and_update_commits_them_with_lattice_s_all_at_onc
     assert "isotherm\nXanthe</textarea>" in page  # tidied, in order regardless of case
     assert not (labels_dir / "words.json").exists()  # a draft isn't committed
 
-    # Lattice approves another word after the page was shown: that page's Update commits nothing.
+    # Another tab changes the draft after the page was shown: that page's Update commits nothing.
     seen = page.split("name='seen' value='")[1].split("'")[0]
-    vocab.write_text(json.dumps({"format_version": 1, "terms": [
-        {"term": "gnomon", "source": "repair"}, {"term": "Gutenberg", "source": "archive"}, {"term": "Kelvin", "source": "archive"}]}))
+    client.post("/words", data={"action": "save", "words": "isotherm\nKelvin\nXanthe"})
     stale = client.post("/words", data={"action": "update", "seen": seen}, follow_redirects=False)
     assert "changed" in stale.headers["location"] and not (labels_dir / "words.json").exists()
 
     seen = client.get("/words").text.split("name='seen' value='")[1].split("'")[0]
     client.post("/words", data={"action": "update", "seen": seen})
-    assert json.loads((labels_dir / "words.json").read_text()) == {
-        "typed": ["isotherm", "Xanthe"], "lattice": ["gnomon", "Gutenberg", "Kelvin"]}
+    assert json.loads((labels_dir / "words.json").read_text()) == {"typed": ["isotherm", "Kelvin", "Xanthe"]}
     assert not (labels_dir / "words.draft.txt").exists()
     assert "name='seen'" not in client.get("/words").text  # nothing left to update
-
-    # Unreadable Lattice words never commit as "Lattice has none".
-    vocab.write_text(json.dumps({"format_version": 2, "terms": []}))
-    client.post("/words", data={"action": "save", "words": "Xanthe"})
-    assert "name='seen'" not in client.get("/words").text
 
 
 @pytest.fixture
@@ -873,10 +861,8 @@ def test_a_words_update_enqueues_the_whole_pipeline(portal, tmp_path, monkeypatc
     _, db_path, labels_dir = portal
     calls = []
     monkeypatch.setattr(enqueue, "post", lambda url, token, spec: calls.append(spec) or (7, True))
-    vocab = tmp_path / "vocab.json"
-    vocab.write_text(json.dumps({"format_version": 1, "terms": [{"term": "gnomon", "source": "repair"}]}))
     client = TestClient(create_app(db_path, tmp_path / "audio", labels_dir, labels_dir / "stream", "me", "correct horse",
-                                   "k" * 64, vocab_path=vocab, corral_url="http://corral.test", corral_token="t"))
+                                   "k" * 64, corral_url="http://corral.test", corral_token="t"))
     log_in(client)
     client.post("/words", data={"action": "save", "words": "Xanthe"})
     assert calls == []  # a draft changes nothing yet

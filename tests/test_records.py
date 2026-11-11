@@ -365,7 +365,7 @@ def test_sealing_waits_for_the_current_vocabulary_but_not_for_a_conversation_tha
     (d["transcripts"] / "failed").mkdir()
     (d["transcripts"] / "failed" / "c2.json").write_text(json.dumps(
         {"conversation_id": "c2", "wav_sha256": "sha-c2", "settings": settings_for([]), "error": "boom"}))
-    (d["labels"] / "words.json").write_text(json.dumps({"typed": ["Xanthe"], "lattice": []}))
+    (d["labels"] / "words.json").write_text(json.dumps({"typed": ["Xanthe"]}))
     assert seal(first, d["records"], d["transcripts"], d["labels"], now=NOW)["sealed"] == 0
     # Without the words it won't be retried, so it seals untranscribed, and c3 with it.
     (d["labels"] / "words.json").unlink()

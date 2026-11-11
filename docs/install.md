@@ -396,11 +396,7 @@ names reach the stream, never coordinates.
 
 The portal's Words page lists words transcription leans toward (names,
 jargon). Type them one per line and save a draft; it shows what would change
-and waits as long as you like. Update commits them together with the words
-you approved in Lattice, which Idea Machine writes to
-`/mnt/fast/ideamachine/vocab/vocab.json`. The portal only reads it. `nas.sh`
-never creates that folder, since Idea Machine's dataset mounts there: if
-it's missing, the portal starts without it and `nas.sh` says so. Each Update enqueues the
+and waits as long as you like. Each Update enqueues the
 pipeline, which re-transcribes the conversations not yet sealed (the last two
 weeks), so batch your edits; to redo older ones too, unseal them
 (Reprocessing).

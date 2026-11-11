@@ -128,25 +128,16 @@ conversation whose `revision` changed and replaces everything it had for it.
 Transcription is per conversation (`hearsay/transcribe.py`): a transcript is used only with the exact WAV and settings
 it was made from. Any change to either transcribes the whole conversation again, with a new `transcript_revision`. The
 WAV changes when the conversation grows or its audio or boundaries change; the settings when the model, the diarizer's
-settings or the vocabulary change. Parakeet works through long conversations in pieces of at most 300 s, cut in
+settings or the words (below) change. Parakeet works through long conversations in pieces of at most 300 s, cut in
 pauses; they're internal, don't show in the stream, and are never redone on their own.
 
-## Vocabulary: Idea Machine → Hearsay
+## Words
 
-The one thing that flows the other way. Idea Machine writes the terms the operator approved in Lattice to
-`/mnt/fast/ideamachine/vocab/vocab.json`, in its own folder, which Hearsay only reads (`hearsay/words.py`):
-
-```json
-{"format_version": 1, "terms": [{"term": "Corral", "source": "repair", "heard_as": "coral"}]}
-```
-
-Hearsay reads only `term`; `source` and the optional `heard_as` are Idea Machine's. A file with any other
-`format_version`, or one that can't be read, gives no terms, and the portal's Words page says why. No file is no terms.
-
-Nothing reaches transcription until the operator presses Update on the Words page, which commits these terms and the
-words typed there, as they are then. Every Update changes the transcription settings, so every conversation not yet
-sealed (those still held, the last two weeks) is transcribed again, with new `transcript_revision`s and renumbered ids;
-older conversations change only when the operator unseals them.
+Nothing flows back from Idea Machine. Transcription leans only toward the words the operator types on the portal's
+Words page (`hearsay/words.py`), as they were when they last pressed Update there. Every Update changes the
+transcription settings, so every conversation not yet sealed (those still held, the last two weeks) is transcribed
+again, with new `transcript_revision`s and renumbered ids; older conversations change only when the operator unseals
+them. Idea Machine's own corrections never change a transcript.
 
 ## Forgetting
 

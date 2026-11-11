@@ -18,7 +18,11 @@ its app. The receiver and the tunnel are gone; the raw payloads stay and are
 still parsed. Nothing of Hearsay's is on the public internet now. In the
 same change Hearsay moved to the NAS's NVMe pool, and reprocess stopped
 rewriting unchanged audio and the whole database every hour. Idea
-Machine moved too; the portal reads its vocab from `/mnt/fast/ideamachine`.
+Machine moved too; the portal read its vocab from `/mnt/fast/ideamachine`
+until 2026-11-10, when Idea Machine retired it (its decision 0012, #60):
+the vocabulary hurt transcription. A `words.json` committed before then
+keeps those terms under `lattice`, which nothing reads; the next Update
+drops them.
 
 ## 2. Parse from reality
 
