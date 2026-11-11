@@ -193,6 +193,11 @@ Changed 2026-11-11: paused audio of 5 s or less, from its first sound to
 its last and in total, is deleted as soon as the pause ends, without
 looking back through it, as audio-less windows already were; one undone at
 once was only clutter to review.
+The list of 0 s windows that prompted it (2026-11-10, 5:15 PM) wasn't
+pauses: after a download the pendant reported its last few packets as
+still stored and sent them again, in 11 rounds of 1 to 9 packets, every one
+byte for byte a packet already kept, and each round, counting as paused,
+became a window. The app now keeps a re-sent packet once.
 
 Added 2026-11-11: a paused window's selected stretch can be shared as a WAV
 (silence skipped, as the player plays it) by AirDrop or to Files; the share
