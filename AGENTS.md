@@ -15,7 +15,7 @@ The product of Hearsay is the utterance stream (`hearsay/stream.py`): who said
 what, when, one JSONL file per conversation plus `index.json`, never audio.
 [docs/stream.md](docs/stream.md) is its contract with Idea Machine, and the
 only place it's written down: fields, speakers, how conversations and their
-ids change, the vocabulary Idea Machine sends back, and the guarantees. A
+ids change, and the guarantees. A
 change to the stream's format or meaning updates it in the same change.
 
 ## Invariants

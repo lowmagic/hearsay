@@ -55,7 +55,7 @@ places not yet applied show as they will be.
 
 The Words page edits the words transcription is nudged toward
 (hearsay/words.py): a draft kept until the operator presses Update, which
-commits it with Lattice's approved terms all at once.
+commits it all at once.
 
 Each edit a reprocess applies (a tag, a mark thrown out or taken back, a
 place) enqueues one on corral once the response is sent
@@ -108,7 +108,7 @@ from hearsay.places import (
 from hearsay.speakers import NOT_OWNER_THRESHOLD
 from hearsay.stream import letters, published, speaker_kind
 from hearsay.turns import categories, read_operator_files, resolve, wall
-from hearsay.words import boosted, commit, read_committed, read_draft, read_lattice, save_draft, tidy
+from hearsay.words import boosted, commit, read_committed, read_draft, save_draft, tidy
 
 log = logging.getLogger("hearsay.portal")
 
@@ -508,8 +508,7 @@ def heard_at_spot(spot_times: list[float], times: list[float], turns: list[tuple
 
 
 def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Path, user: str, password: str,
-               session_key: str, app_token: str = "", vocab_path: Path | None = None, corral_url: str = "",
-               corral_token: str = "") -> FastAPI:
+               session_key: str, app_token: str = "", corral_url: str = "", corral_token: str = "") -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     tags_path = labels_dir / "tags.jsonl"
 
@@ -1433,33 +1432,23 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
             apply_later(background)
         return RedirectResponse("/places", status_code=303)
 
-    def proposed_words() -> tuple[dict[str, list[str]], list[str], str | None]:
-        """What Update would commit (the draft, or the typed words if there is
-        none, with Lattice's terms as they are now), the draft's typed words,
-        and why Lattice's terms couldn't be read, if they couldn't."""
-        committed = read_committed(labels_dir)
+    def proposed_words() -> list[str]:
+        """What Update would commit: the draft, or the committed words if there is none."""
         draft = read_draft(labels_dir)
-        typed = committed["typed"] if draft is None else tidy(draft)
-        lattice, error = read_lattice(vocab_path)
-        return {"typed": typed, "lattice": lattice}, typed, error
+        return boosted(read_committed(labels_dir)) if draft is None else tidy(draft)
 
-    def words_seen(proposed: dict[str, list[str]]) -> str:
-        return hashlib.sha256(json.dumps(proposed, sort_keys=True).encode()).hexdigest()
+    def words_seen(proposed: list[str]) -> str:
+        return hashlib.sha256(json.dumps(proposed).encode()).hexdigest()
 
     @app.get("/words")
     async def show_words(request: Request) -> Response:
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
-        committed = read_committed(labels_dir)
-        proposed, typed, error = proposed_words()
-        before, after = set(boosted(committed)), set(boosted(proposed))
-
-        def source(word: str, lists: dict[str, list[str]]) -> str:
-            return "Lattice" if word in lists["lattice"] and word not in lists["typed"] else "typed"
-
+        proposed = proposed_words()
+        before, after = set(boosted(read_committed(labels_dir))), set(proposed)
         changes = "".join(
-            f"<li class='added'>+ {html.escape(w)} <span class='muted'>{source(w, proposed)}</span></li>" if w in after else
-            f"<li><span class='removed'>− {html.escape(w)}</span> <span class='muted'>{source(w, committed)}</span></li>"
+            f"<li class='added'>+ {html.escape(w)}</li>" if w in after else
+            f"<li><span class='removed'>− {html.escape(w)}</span></li>"
             for w in tidy(list(before ^ after)))
         spellings = {}
         for w in after:
@@ -1472,26 +1461,23 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
         finally:
             db.close()
 
-        notice = ("<p class='error'>Lattice's words changed since that page was shown. Check the changes again.</p>"
+        notice = ("<p class='error'>The words changed since that page was shown. Check the changes again.</p>"
                   if request.query_params.get("changed") else "")
-        if error:
-            notice += f"<p class='error'>{html.escape(error)}. Update waits until Lattice's words can be read.</p>"
         if clashes:
             notice += ("<p class='error'>Spelled more than one way: "
                        f"{html.escape('; '.join(', '.join(ws) for ws in clashes))}. Parakeet leans toward each spelling.</p>")
-        update = ("" if error or not changes else
+        update = ("" if not changes else
                   f"<form method='post' action='/words'><input type='hidden' name='seen' value='{words_seen(proposed)}'>"
                   f"<button type='submit' name='action' value='update'>Update: re-transcribes the {conversations}"
                   " conversation(s) not yet sealed</button></form>")
-        box = html.escape("\n".join(typed))
+        box = html.escape("\n".join(proposed))
         discard = ("<form method='post' action='/words'><button type='submit' name='action' value='discard'>"
                    "Discard draft</button></form>" if read_draft(labels_dir) is not None else "")
         return page("Hearsay words", f"""
 <p><a href="/">← Hearsay</a></p>
 <h1>Words</h1>
 <p class="muted">Names and terms transcription leans toward, one per line, spelled and capitalized as they
-should be written. Lattice's approved words are added on Update; remove those in Lattice. Edits wait here
-as a draft until you press Update.</p>
+should be written. Edits wait here as a draft until you press Update.</p>
 {notice}
 <form method="post" action="/words">
   <textarea name="words" autocapitalize="none" spellcheck="false">{box}</textarea>
@@ -1499,7 +1485,7 @@ as a draft until you press Update.</p>
 </form>
 <h2>Changes</h2><ul>{changes or "<li class='muted'>None: transcription already uses these words.</li>"}</ul>
 {update}{discard}
-<p class="muted">{len(after)} word(s), {len(proposed["lattice"])} from Lattice.</p>""")
+<p class="muted">{len(after)} word(s).</p>""")
 
     @app.post("/words")
     async def edit_words(request: Request, background: BackgroundTasks) -> Response:
@@ -1512,14 +1498,12 @@ as a draft until you press Update.</p>
         elif action == "discard":
             (labels_dir / "words.draft.txt").unlink(missing_ok=True)
         elif action == "update":
-            proposed, _, error = proposed_words()
-            if error:
-                return RedirectResponse("/words", status_code=303)
-            # Commit what the page showed, or nothing: Lattice may have
-            # changed its words, or another tab the draft, since.
+            proposed = proposed_words()
+            # Commit what the page showed, or nothing: another tab may have
+            # changed the draft since.
             if form.get("seen", [""])[0] != words_seen(proposed):
                 return RedirectResponse("/words?changed=1", status_code=303)
-            commit(labels_dir, proposed["typed"], proposed["lattice"])
+            commit(labels_dir, proposed)
             if corral_url:
                 # Transcription is what words change, so the whole pipeline, not APPLY.
                 background.add_task(enqueue_on_corral, enqueue.CHAIN)
@@ -1565,8 +1549,6 @@ def app_from_env() -> FastAPI:
         os.environ["HEARSAY_SESSION_KEY"],
         # From capture.env (install/compose.yaml); without it, app login is off.
         os.environ.get("HEARSAY_CAPTURE_TOKEN", ""),
-        # Idea Machine's vocab.json, mounted read-only (install/compose.yaml).
-        Path(os.environ["HEARSAY_VOCAB_FILE"]) if os.environ.get("HEARSAY_VOCAB_FILE") else None,
         # From corral.env (install/compose.yaml).
         corral_url,
         os.environ["CORRAL_TOKEN"] if corral_url else "",

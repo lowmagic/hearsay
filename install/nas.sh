@@ -328,17 +328,6 @@ backups exclude
 backups run
 backups verify
 
-say "Idea Machine's vocab folder $IDEAMACHINE_VOCAB_DIR"
-# The portal mounts it read-only. Never created here: Idea Machine owns it,
-# and a directory made before its dataset would block the dataset's mount.
-if [ -d "$IDEAMACHINE_VOCAB_DIR" ]; then
-    COMPOSE+=(-f "$REPO_DIR/install/compose.vocab.yaml")
-    echo "mounted in the portal"
-else
-    echo "WARNING: missing, so the portal starts without it (the Words page shows no"
-    echo "words from Lattice). Install Idea Machine, then re-run this script."
-fi
-
 say "Portal login in $NAS_PORTAL_ENV"
 env_ensure "$NAS_PORTAL_ENV" HEARSAY_PORTAL_USER hearsay
 env_ensure "$NAS_PORTAL_ENV" HEARSAY_PORTAL_PASSWORD "$(openssl rand -base64 24 | tr -d '/+=')"
