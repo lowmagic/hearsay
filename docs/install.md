@@ -13,8 +13,8 @@ Secrets are kept in env files outside the repo.
 
 The pipeline runs on [corral](https://github.com/junglestyle/corral), set up
 first from the infra repo: its server on the NAS, a NAS worker offering `nas`
-from `/mnt/fast/corral-worker`, and a user worker offering `gpu` on the dev
-box. Corral must be a version with held jobs (`wait_seconds`): update it before Hearsay.
+from `/mnt/fast/corral-worker`, and a worker offering `gpu` on the dev box,
+which runs as its own user, `corral`. Corral must be a version with held jobs (`wait_seconds`): update it before Hearsay.
 `nas.sh` and `gpu.sh` add Hearsay's kinds to those workers and check they're
 running, and `nas.sh` that the server has held jobs.
 
@@ -36,11 +36,19 @@ running, and `nas.sh` that the server has held jobs.
    the TrueNAS UI, and the NAS-wide backups must exist there (Data
    Protection): a recursive periodic snapshot task and a replication task
    for `fast`. The script checks both and tells you if they aren't.
-3. **Dev box with the GPU, as your user:** [`install/gpu.sh`](../install/gpu.sh)
-   sets up transcription (Parakeet, pyannote) as a kind on the dev box's
-   corral worker, which pulls new WAVs from the NAS over `ssh nas` and writes
-   transcripts back. It asks for a Hugging Face token for the gated
-   diarization model, and transcribes everything pending once.
+3. **Dev box with the GPU, as the worker's user, `corral`:**
+   [`install/gpu.sh`](../install/gpu.sh) sets up transcription (Parakeet,
+   pyannote) as a kind on the dev box's corral worker, which pulls new WAVs
+   from the NAS over `ssh nas` and writes transcripts back. `corral` needs its
+   own key for `ssh nas`, without a passphrase. Run it from a clone in that
+   user's home:
+   ```sh
+   sudo -iu corral
+   git clone https://github.com/junglestyle/hearsay.git ~/hearsay
+   ~/hearsay/install/gpu.sh
+   ```
+   It asks for a Hugging Face token for the gated diarization model, and
+   transcribes everything pending once.
 
 4. **iPhone, from the Mac, as your user (replaces Omi's app and cloud as
    the audio path):** [`install/ios.sh`](../install/ios.sh) builds the pendant
@@ -59,8 +67,8 @@ To update, run `git pull` on every host, then re-run `install/nas.sh` on the
 NAS, `install/gpu.sh` on the dev box, and `install/ios.sh` and
 `install/mac.sh` on the Mac, in that order: the NAS must read a new kind of
 upload record before the phone or Mac sends it. The dev box runs its own
-copy of hearsay, so a `git pull` there takes effect when `install/gpu.sh`
-re-runs. With a
+copy of hearsay, in `corral`'s home, so a `git pull` there takes effect when
+`install/gpu.sh` re-runs. With a
 free Apple ID the phone's install expires after 7 days; re-running
 `install/ios.sh` renews it.
 

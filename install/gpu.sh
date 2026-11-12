@@ -2,8 +2,9 @@
 # Dev box GPU worker: transcription (hearsay/transcribe.py) as a kind on the
 # dev box's corral worker, which runs it when the pipeline reaches it. It
 # transcribes and diarizes conversation WAVs from the NAS and writes the
-# transcripts back. Run as your normal user on the dev box, after
-# install/nas.sh. Safe to re-run; also how updates are deployed.
+# transcripts back. Run as the user the corral worker runs as (`corral`, which
+# infra sets up), from a clone in its home, after install/nas.sh. Safe to
+# re-run; also how updates are deployed.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -12,7 +13,7 @@ DEV_ENV="$HOME/.config/hearsay/dev.env"
 CORRAL_CONFIG="$HOME/.config/corral"
 DIARIZATION_MODEL="pyannote/speaker-diarization-community-1"
 
-[ "$(id -u)" -ne 0 ] || die "run as your normal user, not root: the corral worker and its config are per user"
+[ "$(id -u)" -ne 0 ] || die "run as the corral worker's user (sudo -iu corral), not root: the worker and its config are that user's"
 
 say "Checking the GPU"
 # A driver/library version mismatch after a driver update also lands here.
@@ -66,10 +67,10 @@ except Exception as e:
 " || die "fix model access, then re-run"
 
 say "Transcribe kind on the corral worker (github.com/junglestyle/corral)"
-# Corral's worker is set up from its own repo, as a user unit offering gpu.
+# Corral's worker is set up by infra, as a user unit offering gpu, under the user this runs as.
 systemctl --user is-active -q corral-worker && [ -f "$CORRAL_CONFIG/worker.toml" ] \
-    || die "no corral worker running from $CORRAL_CONFIG. Set one up as a user unit (docs/running.md in
-junglestyle/corral), then re-run."
+    || die "no corral worker running from $CORRAL_CONFIG. Run this as the user infra runs the dev box's worker as
+(sudo -iu corral), once infra has set it up."
 grep -q '"gpu"' "$CORRAL_CONFIG/worker.toml" \
     || die "the corral worker in $CORRAL_CONFIG/worker.toml doesn't offer \"gpu\"; add it to offers, then re-run"
 mkdir -p "$CORRAL_CONFIG/kinds.d"
