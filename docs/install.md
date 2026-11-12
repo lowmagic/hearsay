@@ -39,12 +39,31 @@ running, and `nas.sh` that the server has held jobs.
 3. **Dev box with the GPU, as the worker's user, `corral`:**
    [`install/gpu.sh`](../install/gpu.sh) sets up transcription (Parakeet,
    pyannote) as a kind on the dev box's corral worker, which pulls new WAVs
-   from the NAS over `ssh nas` and writes transcripts back. `corral` needs its
-   own key for `ssh nas`, without a passphrase. Run it from a clone in that
-   user's home:
+   from the NAS over `ssh nas` and writes transcripts back. `corral` has two
+   keys of its own, without a passphrase, each named for what it opens:
+   `~/.ssh/nas`, added to the NAS user's authorized keys, and
+   `~/.ssh/hearsay_deploy`, added to this repo under Settings > Deploy keys
+   with write access left off, since the repo is private. Keeping them apart
+   means either can be replaced without breaking the other. As `corral`:
    ```sh
    sudo -iu corral
-   git clone https://github.com/junglestyle/hearsay.git ~/hearsay
+   ssh-keygen -t ed25519 -N "" -C corral@gpu-host -f ~/.ssh/nas
+   ssh-keygen -t ed25519 -N "" -C corral@gpu-host -f ~/.ssh/hearsay_deploy
+   cat >> ~/.ssh/config <<'EOF'
+   Host nas
+       HostName <the NAS's address>
+       User admin
+       IdentityFile ~/.ssh/nas
+       IdentitiesOnly yes
+   EOF
+   chmod 600 ~/.ssh/config
+   ```
+   Add `~/.ssh/nas.pub` on the NAS and `~/.ssh/hearsay_deploy.pub` on GitHub,
+   then clone with the deploy key, which the clone keeps for later pulls, and
+   run the install from it:
+   ```sh
+   git clone -c core.sshCommand="ssh -i ~/.ssh/hearsay_deploy -o IdentitiesOnly=yes" \
+       git@github.com:junglestyle/hearsay.git ~/hearsay
    ~/hearsay/install/gpu.sh
    ```
    It asks for a Hugging Face token for the gated diarization model, and
