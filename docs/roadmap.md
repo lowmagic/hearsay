@@ -835,3 +835,37 @@ the threshold drops almost no one talking.
 Done 2026-11-05: listening through new capture on the conversation pages
 (slice 20), songs' words no longer reached the stream, a session of songs
 one night was clean, and so was the audio for a dance class.
+
+## 23. Notice when the pipeline fails
+
+A failed job does notify the operator: corral's server posts each job that
+gave up (`job.finished`, state `failed`) to an ntfy topic
+(`services/corral/server.toml` in infra). But the notice is the event's raw
+JSON at ntfy's default priority, with no title, so it reads like noise and
+is easy to miss; the operator found out by missing conversations instead.
+
+It happened 2026-11-11: the NAS was updated to e81e355, whose portal wrote
+`labels/words.json` without `lattice`, but the dev box wasn't (`gpu.sh` not
+re-run), and its transcription read `committed["lattice"]`. Every
+transcription job exited 1 with `KeyError: 'lattice'` before transcribing
+anything, so no failure marker was left in `transcripts/failed/`. Capture and
+assembly carried on: a night's conversations had WAVs on the NAS and nothing
+in the portal. Corral's failure notices arrived, but went unread until the
+next morning (2026-11-12), when none had appeared; the cause was in
+`journalctl --user -u corral-worker` on the dev box. Re-running `gpu.sh`
+fixed it.
+
+- A failed job reads as one: a title naming the kind, the host and the
+  attempts (e.g. "hearsay.transcribe failed on eeyore, 3 attempts"), at high
+  priority so it sounds. ntfy can do this from the webhook URL alone
+  (`?tpl=yes` with `t`, `m` and `p` as templates over the event), in infra,
+  without changing corral.
+- The cause in the notice: the last lines of the job's error. The event
+  doesn't carry them, so this one is corral's. Never what was said, nor
+  audio: the notice leaves the boundary through ntfy.sh.
+- Hosts running different versions of Hearsay, the cause this time, are
+  worth a check of their own: the update order in docs/install.md is
+  followed by hand.
+
+Done when: a failed job's notice sounds on the operator's phone and says,
+without opening it, what failed, where, and why.
