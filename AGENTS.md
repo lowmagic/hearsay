@@ -74,7 +74,7 @@ Every slice, done or shelved, and what was measured for it is in the
 ## Coding standards
 
 Code, tests, comments and prose follow [docs/standards.md](docs/standards.md),
-which builds on the org's [principles](https://github.com/junglestyle/.github/blob/main/PRINCIPLES.md), [docs/org-standards.md](docs/org-standards.md) and
+which builds on the org's [principles](https://github.com/lowmagic/.github/blob/main/PRINCIPLES.md), [docs/org-standards.md](docs/org-standards.md) and
 the copy of each topic listed in `.org-standards`, such as
 [docs/org-standards-python.md](docs/org-standards-python.md).
 Run `make check` before committing; it runs everything CI runs except the org standards check.

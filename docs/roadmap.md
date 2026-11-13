@@ -500,13 +500,13 @@ never another site) to land there.
 ## 14. Place as a hint for who is speaking
 
 Shelved 2026-10-28 with naming people (slice 5), its code removed. What was
-built and measured is in [the roadmap as it was](https://github.com/junglestyle/hearsay/blob/068cf870af04516a53421b14e5133dbbdadddb38/docs/roadmap.md#14-place-as-a-hint-for-who-is-speaking).
+built and measured is in [the roadmap as it was](https://github.com/lowmagic/hearsay/blob/068cf870af04516a53421b14e5133dbbdadddb38/docs/roadmap.md#14-place-as-a-hint-for-who-is-speaking).
 
 ## 15. Media hint
 
 Shelved 2026-10-28 with naming people (slice 5), its code removed. What was
 measured (sound-event models and speaker embeddings on media) is in
-[the roadmap as it was](https://github.com/junglestyle/hearsay/blob/068cf870af04516a53421b14e5133dbbdadddb38/docs/roadmap.md#15-media-hint).
+[the roadmap as it was](https://github.com/lowmagic/hearsay/blob/068cf870af04516a53421b14e5133dbbdadddb38/docs/roadmap.md#15-media-hint).
 
 ## 16. The owner's tone of voice
 
@@ -619,7 +619,7 @@ left out (the tracker is noisy at word ends).
 
 Shelved 2026-10-28 with naming people (slice 5), its code removed. Clips
 with their words, time and place (2026-10-25) carried over to the portal's
-turns Hearsay couldn't decide. The rest is in [the roadmap as it was](https://github.com/junglestyle/hearsay/blob/068cf870af04516a53421b14e5133dbbdadddb38/docs/roadmap.md#18-review-that-shows-what-was-said-and-gates-new-matches).
+turns Hearsay couldn't decide. The rest is in [the roadmap as it was](https://github.com/lowmagic/hearsay/blob/068cf870af04516a53421b14e5133dbbdadddb38/docs/roadmap.md#18-review-that-shows-what-was-said-and-gates-new-matches).
 
 ## 19. Turns kept without their audio
 

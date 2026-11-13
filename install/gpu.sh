@@ -66,7 +66,7 @@ except Exception as e:
     sys.exit(f'no access ({type(e).__name__}): accept the terms at https://huggingface.co/$DIARIZATION_MODEL')
 " || die "fix model access, then re-run"
 
-say "Transcribe kind on the corral worker (github.com/junglestyle/corral)"
+say "Transcribe kind on the corral worker (github.com/lowmagic/corral)"
 # Corral's worker is set up by infra, as a user unit offering gpu, under the user this runs as.
 systemctl --user is-active -q corral-worker && [ -f "$CORRAL_CONFIG/worker.toml" ] \
     || die "no corral worker running from $CORRAL_CONFIG. Run this as the user infra runs the dev box's worker as

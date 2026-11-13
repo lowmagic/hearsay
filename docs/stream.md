@@ -3,7 +3,7 @@
 Hearsay's product, and the only thing a consumer reads from it: who said what, when, as one JSONL file per
 conversation plus an index. Idea Machine is the consumer today. This file is the contract between them; anything
 here that disagrees with `hearsay/stream.py` is a bug in this file. Idea Machine's
-[ROADMAP §3.3](https://github.com/junglestyle/ideamachine/blob/main/docs/ROADMAP.md#33-how-idea-machine-imports-it)
+[ROADMAP §3.3](https://github.com/lowmagic/ideamachine/blob/main/docs/ROADMAP.md#33-how-idea-machine-imports-it)
 on is how it imports the stream, which is Idea Machine's business.
 
 The stream holds no audio, ever. It is rewritten after every reprocess into `/mnt/fast/hearsay/stream/`, readable by

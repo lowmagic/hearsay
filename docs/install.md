@@ -11,7 +11,7 @@ missed audio and correcting who spoke. For what Hearsay is, see the
 Each script is idempotent and walks you through any step that needs you.
 Secrets are kept in env files outside the repo.
 
-The pipeline runs on [corral](https://github.com/junglestyle/corral), set up
+The pipeline runs on [corral](https://github.com/lowmagic/corral), set up
 first from the infra repo: its server on the NAS, a NAS worker offering `nas`
 from `/mnt/fast/corral-worker`, and a worker offering `gpu` on the dev box,
 which runs as its own user, `corral`. Corral must be a version with held jobs (`wait_seconds`): update it before Hearsay.
@@ -23,7 +23,7 @@ running, and `nas.sh` that the server has held jobs.
 2. **NAS (TrueNAS SCALE 25.04+):** clone the repo as `admin` into the
    `fast/repos` dataset and run [`install/nas.sh`](../install/nas.sh) with sudo:
    ```sh
-   git clone https://github.com/junglestyle/hearsay.git /mnt/fast/repos/hearsay
+   git clone https://github.com/lowmagic/hearsay.git /mnt/fast/repos/hearsay
    sudo /mnt/fast/repos/hearsay/install/nas.sh
    ```
    This creates the datasets under `fast/hearsay` (the NVMe pool) and their
@@ -63,7 +63,7 @@ running, and `nas.sh` that the server has held jobs.
    run the install from it:
    ```sh
    git clone -c core.sshCommand="ssh -i ~/.ssh/hearsay_deploy -o IdentitiesOnly=yes" \
-       git@github.com:junglestyle/hearsay.git ~/hearsay
+       git@github.com:lowmagic/hearsay.git ~/hearsay
    ~/hearsay/install/gpu.sh
    ```
    It asks for a Hugging Face token for the gated diarization model, and
@@ -318,7 +318,7 @@ which reprocessing reads but never writes. The labeling tool runs on any
 machine of yours with `ssh nas` and an audio player (`paplay` or macOS
 `afplay`): from a checkout as `.venv/bin/python -m hearsay.label`, or installed
 as a command with
-`uv tool install git+ssh://git@github.com/junglestyle/hearsay.git`, then
+`uv tool install git+ssh://git@github.com/lowmagic/hearsay.git`, then
 `hearsay-label` in place of `.venv/bin/python -m hearsay.label` below.
 
 1. Record yourself reading aloud for about 3 minutes, alone, with the pendant
