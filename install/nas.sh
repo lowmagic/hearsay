@@ -20,7 +20,7 @@ fi
 say "Checking the repo is at $NAS_REPO_DIR"
 # Compose and corral's kinds run from this clone.
 [ "$REPO_DIR" = "$NAS_REPO_DIR" ] || die "this is $REPO_DIR. As admin (not root):
-  git clone https://github.com/junglestyle/hearsay.git $NAS_REPO_DIR
+  git clone https://github.com/lowmagic/hearsay.git $NAS_REPO_DIR
 then: sudo $NAS_REPO_DIR/install/nas.sh"
 echo "ok"
 
@@ -356,7 +356,7 @@ export HEARSAY_COMMIT
 # --profile tools also builds the one-shot worker (reprocess) and check images.
 "${COMPOSE[@]}" --profile tools build
 
-say "Corral (github.com/junglestyle/corral)"
+say "Corral (github.com/lowmagic/corral)"
 # Reprocess and the check run as kinds on corral's NAS worker, and the capture
 # receiver enqueues a check after each upload. Corral is set up from the infra repo.
 systemctl is-active -q corral-worker && [ -f "$NAS_CORRAL_DIR/worker.toml" ] \

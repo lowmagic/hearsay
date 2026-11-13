@@ -7,14 +7,14 @@
 
 # hearsay
 
-[![tests](https://github.com/junglestyle/hearsay/actions/workflows/test.yml/badge.svg)](https://github.com/junglestyle/hearsay/actions/workflows/test.yml)
+[![tests](https://github.com/lowmagic/hearsay/actions/workflows/test.yml/badge.svg)](https://github.com/lowmagic/hearsay/actions/workflows/test.yml)
 
 Who said what, when. Hearsay turns recorded conversations into attributed transcripts.
 
 Audio comes from a wearable pendant (through an iPhone app) and a Mac menu-bar recorder. Hearsay
 finds the conversations in it, transcribes them, separates the speakers, works out which turns are
 mine. It names nobody else. The output is a text-only stream of utterances that
-downstream tools read. [Idea Machine](https://github.com/junglestyle/ideamachine) is the first of
+downstream tools read. [Idea Machine](https://github.com/lowmagic/ideamachine) is the first of
 those. All of it runs on my own hardware, and no audio ever goes to a third party.
 
 ## Consent and privacy

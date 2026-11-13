@@ -1,4 +1,4 @@
-"""Enqueue Hearsay's work on corral (github.com/junglestyle/corral).
+"""Enqueue Hearsay's work on corral (github.com/lowmagic/corral).
 
 CHAIN is the pipeline: assemble new audio into WAVs on the NAS, transcribe
 them on the GPU host, fold the transcripts into the stream on the NAS (FOLD),

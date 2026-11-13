@@ -19,7 +19,7 @@ NAS_PCM="$NAS_ROOT/pcm"
 NAS_PORTAL_ENV="$NAS_CONFIG/portal.env"
 NAS_CAPTURE_ENV="$NAS_CONFIG/capture.env"
 NAS_CORRAL_ENV="$NAS_CONFIG/corral.env"
-# Corral's NAS worker (github.com/junglestyle/corral, deployed from the infra repo)
+# Corral's NAS worker (github.com/lowmagic/corral, deployed from the infra repo)
 # runs from here, and its server listens on this port.
 NAS_CORRAL_DIR="/mnt/fast/corral-worker"
 NAS_CORRAL_PORT=8700
