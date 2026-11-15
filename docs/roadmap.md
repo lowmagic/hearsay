@@ -199,6 +199,10 @@ still stored and sent them again, in 11 rounds of 1 to 9 packets, every one
 byte for byte a packet already kept, and each round, counting as paused,
 became a window. The app now keeps a re-sent packet once.
 
+Changed 2026-11-14: the pendant's pause and off taps go between on and
+not on: tapped while paused or off, either switches on, so a pause tap
+no longer takes off to paused, nor an off tap paused to off.
+
 Added 2026-11-11: a paused window's selected stretch can be shared as a WAV
 (silence skipped, as the player plays it) by AirDrop or to Files; the share
 sheet hides messaging, mail, social networks and the clipboard, though other

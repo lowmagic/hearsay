@@ -151,7 +151,7 @@ counts as paused; if it was off, none of it is kept.
 The pendant's single and double tap are set in the app (Pendant button): mark
 to keep the conversation around the tap, from 30 s before it to 30 s after
 you stop, even when it's short; mark to end the conversation there; pause, or
-off (tapping either again switches back on); or nothing. Each confirms with
+off (either one, tapped while paused or off, switches on); or nothing. Each confirms with
 its own buzz. Single tap defaults to keep, double tap to pause. Holding the
 button 3 s powers the pendant down. The NAS must be updated before the
 app whenever the upload format changes, as the update order above does.

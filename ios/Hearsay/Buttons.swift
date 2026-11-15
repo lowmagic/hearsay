@@ -9,7 +9,8 @@ import Foundation
 /// what it did) next to the tap's own BUTTON record, so the NAS knows which
 /// taps were conversation marks (hearsay/capture.py, marks).
 final class Buttons: ObservableObject {
-    /// Pause and off each go back on when tapped again.
+    /// Tapped while on, pause pauses and off switches off; tapped while
+    /// paused or off, either switches on.
     enum Action: String, CaseIterable, Identifiable {
         case nothing, start, end, pause, mute
         var id: Self { self }
@@ -71,8 +72,8 @@ final class Buttons: ObservableObject {
         let mode = pause.mode
         let target: Pause.Mode? = switch action {
         case .nothing, .start, .end: nil
-        case .pause: mode == .paused ? .on : .paused
-        case .mute: mode == .off ? .on : .off
+        case .pause: mode == .on ? .paused : .on
+        case .mute: mode == .on ? .off : .on
         }
         let outcome: Outcome = switch (action, target) {
         case (.start, _): .start
