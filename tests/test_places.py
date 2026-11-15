@@ -168,6 +168,27 @@ def test_wrong_readings_are_corrected_by_time_and_stay_corrected(tmp_path):
     assert places(*corrections, {"type": "rename", "from": "Hom", "to": "Home"}) == ["Home"]
 
 
+def test_moving_a_place_keeps_what_was_said_to_be_at_it_and_forgetting_it_makes_that_wrong(tmp_path):
+    from hearsay.places import read_corrections
+
+    at = {"type": "at", "start": 1, "end": 2, "name": "Home"}
+    forget = {"type": "forget", "name": "Home"}
+    # A move is written as a forget followed by the place's new spots.
+    moved = {"type": "place", "name": "Home", "latitude": HOME[0], "longitude": HOME[1]}
+    for records, said in [([at, forget, moved], "Home"), ([at, forget], None),
+                          ([at, forget, {**moved, "name": "Bar"}], None)]:
+        (tmp_path / "places.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
+        assert read_corrections(tmp_path) == [(1, 2, said)]
+
+
+def test_a_spot_is_put_at_a_place_by_its_own_stretches_of_readings():
+    from hearsay.places import spot_spans
+
+    # Readings at 0-2 and 5 are the spot's; 3-4 were somewhere else.
+    assert spot_spans([0, 1, 2, 3, 4, 5], [0, 1, 2, 5]) == [(0, 2), (5, 5)]
+    assert spot_spans([0, 1], []) == []
+
+
 def test_a_span_put_at_a_place_holds_from_its_start_without_a_reading_there(tmp_path):
     raw, db_path, labels = tmp_path / "raw", tmp_path / "h.sqlite", tmp_path / "labels"
     labels.mkdir()

@@ -1,13 +1,13 @@
-"""The hold (roadmap slice 20): a conversation reaches the stream two weeks
+"""The hold (roadmap slice 20): a conversation reaches the stream a week
 after it ends, or sooner when the operator releases it.
 
 Until then consumers don't see it at all (its index entry, file, taps and
 places), and the operator can read and hear it in the portal and throw out
 what shouldn't go (hearsay/forget.py). Two weeks to start, for ample time to
-review; 7 days once reviewing is routine. The same boundary seals a
-conversation (hearsay/records.py) and deletes what was thrown out of it
-(hearsay/retention.py), so everything stays open to change while it's
-reviewed, and what Idea Machine gets has its final transcript.
+review; a week from 2026-11-14, once reviewing was routine. The same
+boundary seals a conversation (hearsay/records.py) and deletes what was
+thrown out of it (hearsay/retention.py), so everything stays open to change
+while it's reviewed, and what Idea Machine gets has its final transcript.
 
 Releasing is the operator's input in labels/release.jsonl, by absolute time
 like everything else, so it survives re-transcription:
@@ -39,7 +39,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-HOLD = 14 * 24 * 3600  # seconds after a conversation ends
+HOLD = 7 * 24 * 3600  # seconds after a conversation ends
 DELAY = 5 * 60  # seconds after Release is pressed, during which it can be cancelled
 
 SCHEMA = """

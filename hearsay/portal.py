@@ -8,7 +8,9 @@ The iPhone app logs in instead with the capture token it already holds
 shows in its Tag tab, and a conversation listed on its Places map opens its
 page; whoever holds that token can already send Hearsay audio. The app's own
 Places map sends the token on each request instead: GET /places.json, and
-POST /places with the same fields as the page's forms.
+POST /places with the same fields as the page's forms, and one of its own:
+assign, which puts an unnamed spot at a place already named, without a new
+spot (hearsay/places.py spot_spans).
 
 Hearsay says only whether the owner spoke (2026-10-28). The front page plays
 the turns it couldn't decide, and those that sound like the media the operator
@@ -98,10 +100,12 @@ from hearsay.places import (
     MAX_RADIUS,
     MIN_RADIUS,
     RADIUS,
+    metres,
     read_corrections,
     read_ignored,
     read_places,
     read_readings,
+    spot_spans,
     unnamed_spots,
     visits,
 )
@@ -192,10 +196,11 @@ textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 0.6rem; 
 .tagged, .apply { display: flex; align-items: center; gap: 0.5rem; }
 .tagged span, .apply span { flex: 1; }
 .tagged button, .apply button { width: auto; margin: 0; padding: 0.4rem 1rem; }
-.filter { display: flex; gap: 0.5rem; }
-.filter select, .filter input { font: inherit; padding: 0.4rem; }
-.filter input { flex: 1; min-width: 0; }
-.filter button { width: auto; margin: 0; padding: 0.4rem 1rem; }
+.filter { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.filter select, .filter input { font: inherit; padding: 0.4rem; min-width: 0; }
+.filter select { max-width: 45%; }  /* as wide as its longest place otherwise */
+.filter input { flex: 1; }
+.filter button { flex-basis: 100%; margin: 0; padding: 0.6rem; }
 .player { position: sticky; top: 0; background: var(--bg); padding: 0.3rem 0; }
 .turn { padding: 0.4rem 0; scroll-margin-top: 4rem; }
 .turn a.at, a.inline { display: inline; }
@@ -566,7 +571,7 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Pat
         if pending := [r for r in releases if r["start"] <= start and end <= r["end"] and r["due"] > now]:
             return f"released, goes at {local(pending[0]['due']):%H:%M} unless you cancel", "cancel"
         if not held(start, end, due(releases, now), now):
-            return ("released" if end + HOLD > now else "two weeks up") + ": out at the next reprocess", ""
+            return ("released" if end + HOLD > now else "a week up") + ": out at the next reprocess", ""
         return f"held until {local(end + HOLD):%a %b %-d}", "" if is_open else "release"
 
     def append_tag(record: dict, path: Path = tags_path) -> None:
@@ -1142,7 +1147,7 @@ thrown out.</p>
 
     @app.post("/release")
     async def release(request: Request, background: BackgroundTasks) -> Response:
-        """Let a conversation that has ended reach the stream before its two weeks are up (asked first by GET)."""
+        """Let a conversation that has ended reach the stream before its week is up (asked first by GET)."""
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
         form = await read_form(request)
@@ -1412,6 +1417,22 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
             records = [{"type": action, "latitude": here[0], "longitude": here[1]}]
         elif action == "forget" and field("from"):
             records = [{"type": "forget", "name": field("from")}]
+        elif action == "assign" and here and name in {sp[0] for sp in read_places(labels_dir)}:
+            # An unnamed spot was at a place already named, outside its area: each
+            # stretch of its readings is put at it, rather than adding a spot.
+            spots = read_places(labels_dir)
+            db = connect()
+            try:
+                readings = read_readings(db, labels_dir, spots)
+            finally:
+                db.close()
+            near = [(metres(*here, s["latitude"], s["longitude"]), i, s) for i, s in enumerate(
+                unnamed_spots([r[:3] for r in readings if r[3] is None], spots, read_ignored(labels_dir)))]
+            near = [n for n in near if n[0] <= RADIUS]
+            if near:
+                spot = min(near)[2]
+                records = [{"type": "at", "start": start, "end": end, "name": name}
+                           for start, end in spot_spans([r[0] for r in readings], spot["times"])]
         elif action in ("drop", "at") and times and (action == "drop" or name):
             # A span of readings that was wrong, or was really at a named place (hearsay/places.py).
             records = [{"type": action, "start": times[0], "end": times[1]} | ({"name": name} if action == "at" else {})]

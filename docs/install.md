@@ -151,7 +151,7 @@ counts as paused; if it was off, none of it is kept.
 The pendant's single and double tap are set in the app (Pendant button): mark
 to keep the conversation around the tap, from 30 s before it to 30 s after
 you stop, even when it's short; mark to end the conversation there; pause, or
-off (tapping either again switches back on); or nothing. Each confirms with
+off (either one, tapped while paused or off, switches on); or nothing. Each confirms with
 its own buzz. Single tap defaults to keep, double tap to pause. Holding the
 button 3 s powers the pendant down. The NAS must be updated before the
 app whenever the upload format changes, as the update order above does.
@@ -214,13 +214,13 @@ see a half-built database and a run with nothing new writes almost nothing
 (`fast` is snapshotted nightly). Slow steps are cached by audio content in
 `db/cache.sqlite`.
 
-A conversation is sealed when the two weeks Idea Machine waits for it end
+A conversation is sealed when the week Idea Machine waits for it ends
 ([`hearsay/hold.py`](../hearsay/hold.py)), once it's transcribed and every one
 before it is sealed ([`hearsay/records.py`](../hearsay/records.py)): what its
 audio gave (boundaries, transcript, voice embeddings, music and tone scores)
 is kept in `/mnt/fast/hearsay/records/`, and from then on reprocess takes it
 from there and never reads that audio again. So a run with nothing new reads
-only the last two weeks' audio. Who spoke, your tags and throw-outs,
+only the last week's audio. Who spoke, your tags and throw-outs,
 places and the stream still re-run over everything. A sealed conversation
 keeps the transcript and models it was sealed with: a Words update or a new
 model reaches it only if you unseal it, while its audio is still kept: never
@@ -265,7 +265,7 @@ sealed conversations ([`hearsay/retention.py`](../hearsay/retention.py)):
   (its boundaries moved while it was held, or it's from Omi's days), on
   any run.
 - Decoded audio goes on the run after the audio is sealed, and cached
-  model results once no run has used them for two weeks.
+  model results once no run has used them for a week.
 
 Each deleted file is listed in `/mnt/fast/hearsay/records/deleted.jsonl`
 before it goes; the NAS's snapshots keep it until they expire. To see what
@@ -389,7 +389,7 @@ or mostly people other than you (80% or more), is flagged there.
 Tap a day (or Today on the front page) to read it through: its conversations
 in order, with how long it was quiet between them. Times are the NAS's time
 zone, which `nas.sh` hands the portal.
-Idea Machine sees a conversation only two weeks after it ends, and each
+Idea Machine sees a conversation only a week after it ends, and each
 says whether it's in the stream yet or held, and until when. To send one
 sooner, once it has ended, press Release to Idea Machine on its page and
 then Release on the page that asks. It goes 5 minutes later, and until then
@@ -415,7 +415,7 @@ The portal's Apply now starts it as soon as the NAS is free. Words changes
 start the whole pipeline instead (below). Once it runs, its words leave the
 stream and Hearsay's database for good, and Idea
 Machine is told to delete what it took from them. Once the conversation is
-sealed (two weeks after it ends, or on the next reprocess if it already
+sealed (a week after it ends, or on the next reprocess if it already
 is), its audio is silenced, its words are cut from the records and
 transcripts, and the raw audio wholly inside it is deleted; raw audio that
 only reaches into it goes at 60 days with the rest (see Reprocessing).
