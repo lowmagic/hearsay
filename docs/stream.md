@@ -135,7 +135,7 @@ pauses; they're internal, don't show in the stream, and are never redone on thei
 
 Nothing flows back from Idea Machine. Transcription leans only toward the words the operator types on the portal's
 Words page (`hearsay/words.py`), as they were when they last pressed Update there. Every Update changes the
-transcription settings, so every conversation not yet sealed (those still held, the last two weeks) is transcribed
+transcription settings, so every conversation not yet sealed (those still held, the last week) is transcribed
 again, with new `transcript_revision`s and renumbered ids; older conversations change only when the operator unseals
 them. Idea Machine's own corrections never change a transcript.
 
@@ -155,16 +155,16 @@ transcribed (`transcribed` false, no file). Delete what you hold from a stretch;
 conversation's revision to change.
 
 Throwing out is the operator's input, applied on every reprocess, so a re-run from raw never brings it back into the
-stream. Hearsay deletes the stretch's audio and cuts its words from what it keeps once the conversation is sealed, two
-weeks after it ends (raw audio only partly in the stretch goes 60 days after it ends); nothing of that changes the
+stream. Hearsay deletes the stretch's audio and cuts its words from what it keeps once the conversation is sealed, a
+week after it ends (raw audio only partly in the stretch goes 60 days after it ends); nothing of that changes the
 stream.
 
 ## The hold
 
-A conversation enters the stream two weeks after it ends, or sooner when the operator releases it (only one that has
+A conversation enters the stream a week after it ends, or sooner when the operator releases it (only one that has
 ended can be; a release takes effect 5 minutes after it's made, and they can cancel it until then): until then it isn't
 in the index at all, nor its file, taps or places. That's additive, so
-`format_version` stays 1, but captures, self-notes too, arrive up to two weeks late. Once in, a conversation stays: the
+`format_version` stays 1, but captures, self-notes too, arrive up to a week late. Once in, a conversation stays: the
 stream never withdraws a conversation it has published, so whatever was in it before the hold began stays too, and a
 conversation that takes in speech already published (late audio gives it a new id) isn't held either. Only
 `forgotten.json` takes anything out.

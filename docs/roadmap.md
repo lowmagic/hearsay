@@ -755,6 +755,10 @@ reprocess already running read it; now a reprocess counts only releases
 already due, and each release enqueues one held until it is. Release asks
 on a page of its own: the browser's confirm dialog it used didn't come up.
 
+Changed 2026-11-14, from the operator's use: the hold is a week, not two,
+now that reviewing is routine. Sealing, discarding thrown-out audio and
+the model cache's pruning share its boundary, so they move to a week too.
+
 ## 21. TV and other media, per turn
 
 TV and video dialogue is most of what reaches the stream that isn't anyone

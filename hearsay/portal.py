@@ -566,7 +566,7 @@ def create_app(db_path: Path, audio_dir: Path, labels_dir: Path, stream_dir: Pat
         if pending := [r for r in releases if r["start"] <= start and end <= r["end"] and r["due"] > now]:
             return f"released, goes at {local(pending[0]['due']):%H:%M} unless you cancel", "cancel"
         if not held(start, end, due(releases, now), now):
-            return ("released" if end + HOLD > now else "two weeks up") + ": out at the next reprocess", ""
+            return ("released" if end + HOLD > now else "a week up") + ": out at the next reprocess", ""
         return f"held until {local(end + HOLD):%a %b %-d}", "" if is_open else "release"
 
     def append_tag(record: dict, path: Path = tags_path) -> None:
@@ -1142,7 +1142,7 @@ thrown out.</p>
 
     @app.post("/release")
     async def release(request: Request, background: BackgroundTasks) -> Response:
-        """Let a conversation that has ended reach the stream before its two weeks are up (asked first by GET)."""
+        """Let a conversation that has ended reach the stream before its week is up (asked first by GET)."""
         if not logged_in(request):
             return RedirectResponse("/login", status_code=303)
         form = await read_form(request)
