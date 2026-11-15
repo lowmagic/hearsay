@@ -192,10 +192,11 @@ textarea { font: inherit; width: 100%; box-sizing: border-box; padding: 0.6rem; 
 .tagged, .apply { display: flex; align-items: center; gap: 0.5rem; }
 .tagged span, .apply span { flex: 1; }
 .tagged button, .apply button { width: auto; margin: 0; padding: 0.4rem 1rem; }
-.filter { display: flex; gap: 0.5rem; }
-.filter select, .filter input { font: inherit; padding: 0.4rem; }
-.filter input { flex: 1; min-width: 0; }
-.filter button { width: auto; margin: 0; padding: 0.4rem 1rem; }
+.filter { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.filter select, .filter input { font: inherit; padding: 0.4rem; min-width: 0; }
+.filter select { max-width: 45%; }  /* as wide as its longest place otherwise */
+.filter input { flex: 1; }
+.filter button { flex-basis: 100%; margin: 0; padding: 0.6rem; }
 .player { position: sticky; top: 0; background: var(--bg); padding: 0.3rem 0; }
 .turn { padding: 0.4rem 0; scroll-margin-top: 4rem; }
 .turn a.at, a.inline { display: inline; }
