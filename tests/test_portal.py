@@ -19,7 +19,7 @@ from hearsay.hold import SCHEMA as HOLD_SCHEMA  # noqa: E402
 from hearsay.media import SCHEMA as MEDIA_SCHEMA  # noqa: E402
 from hearsay.music import SCHEMA as MUSIC_SCHEMA  # noqa: E402
 from hearsay.parse import SCHEMA as PARSE_SCHEMA  # noqa: E402
-from hearsay.places import SCHEMA as PLACES_SCHEMA, read_places  # noqa: E402
+from hearsay.places import SCHEMA as PLACES_SCHEMA, read_corrections, read_places  # noqa: E402
 from hearsay.portal import create_app  # noqa: E402
 from hearsay.speakers import SCHEMA as SPEAKERS_SCHEMA  # noqa: E402
 from hearsay.turns import SCHEMA as TURNS_SCHEMA, record_operator_input  # noqa: E402
@@ -271,6 +271,37 @@ def test_a_spot_where_the_owner_spent_time_can_be_named(portal):
     assert visit["readings"] == [1_767_225_590, 1_767_225_830]
     client.post("/places", headers=app, data={"action": "drop", "start": "1767225590", "end": "1767225830"})
     assert client.get("/places.json", headers=app).json()["visits"] == {}
+
+
+def test_a_spot_outside_a_place_s_area_is_put_at_it_without_a_new_spot(portal):
+    from hearsay.conversations import SCHEMA as CONVERSATIONS_SCHEMA
+
+    client, db_path, labels_dir = portal
+    db = sqlite3.connect(db_path)
+    db.executescript(CONVERSATIONS_SCHEMA + PLACES_SCHEMA)
+    # Five minutes at a spot about 170 m from Back Room, then one reading back inside it.
+    db.executemany("INSERT INTO locations VALUES ('p', ?, -26.12, 80.14, 65)", [(1_767_225_590 + 60 * i,) for i in range(5)])
+    db.execute("INSERT INTO locations VALUES ('p', 1767225890, -26.1215, 80.14, 65)")
+    db.execute("INSERT INTO conversations VALUES ('c1', 1767225590, 1767225900, 32, 0)")
+    db.commit()
+    db.close()
+    app = {"Authorization": "Bearer capture-token"}
+    client.post("/places", headers=app, data={"action": "name", "name": "Back Room", "latitude": "-26.1215", "longitude": "80.14"})
+    [spot] = client.get("/places.json", headers=app).json()["unnamed"]
+    before = (labels_dir / "places.jsonl").read_text()
+
+    # Not a place already named, or nowhere near the spot: nothing is written.
+    for name, latitude in [("Front Room", spot["latitude"]), ("Back Room", spot["latitude"] + 0.01)]:
+        client.post("/places", headers=app, data={"action": "assign", "name": name, "latitude": str(latitude),
+                                                  "longitude": str(spot["longitude"])})
+    assert (labels_dir / "places.jsonl").read_text() == before
+
+    client.post("/places", headers=app, data={"action": "assign", "name": "Back Room", "latitude": str(spot["latitude"]),
+                                              "longitude": str(spot["longitude"])})
+    assert read_places(labels_dir) == [("Back Room", -26.1215, 80.14, 100.0)]  # no new spot
+    places = client.get("/places.json", headers=app).json()
+    assert places["unnamed"] == [] and [v["conversation_id"] for v in places["visits"]["Back Room"]] == ["c1"]
+    assert read_corrections(labels_dir) == [(1_767_225_590, 1_767_225_830, "Back Room")]
 
 
 @pytest.mark.parametrize("radius", ["nan", "inf", "-inf", "wide"])

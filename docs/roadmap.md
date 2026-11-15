@@ -501,6 +501,17 @@ portal, in the app, to read and hear it: /places.json gives each one's
 conversation_id, and POST /login/app takes ?next= (a path on the portal,
 never another site) to land there.
 
+From the operator's use (2026-11-15): a selected pin can be removed (a
+move to the place's other pins, or a forget if it was the only one). Naming
+a spot outside a place's area had added it as a second pin of the same
+name; instead, Was At puts the spot at the place without one: POST
+/places action=assign, with name, latitude and longitude, writes an "at"
+for each run of the spot's readings among all of them, so none from
+anywhere else is taken in. Typing a name already used still adds a pin.
+A move had turned the place's "at" corrections into drops, as a forget
+does; a forget followed by a spot of the same name is a move, and keeps
+them, including those of moves already made.
+
 ## 14. Place as a hint for who is speaking
 
 Shelved 2026-10-28 with naming people (slice 5), its code removed. What was

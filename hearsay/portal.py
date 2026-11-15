@@ -8,7 +8,9 @@ The iPhone app logs in instead with the capture token it already holds
 shows in its Tag tab, and a conversation listed on its Places map opens its
 page; whoever holds that token can already send Hearsay audio. The app's own
 Places map sends the token on each request instead: GET /places.json, and
-POST /places with the same fields as the page's forms.
+POST /places with the same fields as the page's forms, and one of its own:
+assign, which puts an unnamed spot at a place already named, without a new
+spot (hearsay/places.py spot_spans).
 
 Hearsay says only whether the owner spoke (2026-10-28). The front page plays
 the turns it couldn't decide, and those that sound like the media the operator
@@ -98,10 +100,12 @@ from hearsay.places import (
     MAX_RADIUS,
     MIN_RADIUS,
     RADIUS,
+    metres,
     read_corrections,
     read_ignored,
     read_places,
     read_readings,
+    spot_spans,
     unnamed_spots,
     visits,
 )
@@ -1413,6 +1417,22 @@ exactly where it is, find it in Maps, drop a pin, copy its coordinates, and past
             records = [{"type": action, "latitude": here[0], "longitude": here[1]}]
         elif action == "forget" and field("from"):
             records = [{"type": "forget", "name": field("from")}]
+        elif action == "assign" and here and name in {sp[0] for sp in read_places(labels_dir)}:
+            # An unnamed spot was at a place already named, outside its area: each
+            # stretch of its readings is put at it, rather than adding a spot.
+            spots = read_places(labels_dir)
+            db = connect()
+            try:
+                readings = read_readings(db, labels_dir, spots)
+            finally:
+                db.close()
+            near = [(metres(*here, s["latitude"], s["longitude"]), i, s) for i, s in enumerate(
+                unnamed_spots([r[:3] for r in readings if r[3] is None], spots, read_ignored(labels_dir)))]
+            near = [n for n in near if n[0] <= RADIUS]
+            if near:
+                spot = min(near)[2]
+                records = [{"type": "at", "start": start, "end": end, "name": name}
+                           for start, end in spot_spans([r[0] for r in readings], spot["times"])]
         elif action in ("drop", "at") and times and (action == "drop" or name):
             # A span of readings that was wrong, or was really at a named place (hearsay/places.py).
             records = [{"type": action, "start": times[0], "end": times[1]} | ({"name": name} if action == "at" else {})]

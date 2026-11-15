@@ -3,8 +3,10 @@ import SwiftUI
 
 /// The places the operator has named, on Apple's map, so places go to no one
 /// new: drag a named spot's pin to where the place really is, select it to
-/// resize the area it covers, or name a spot where the owner spent time. The portal (hearsay/portal.py) serves the
-/// spots and keeps the names; each conversation listed opens its page there, to read and hear it.
+/// resize the area it covers or remove it, and name a spot where the owner
+/// spent time or put it at a place already named. The portal
+/// (hearsay/portal.py) serves the spots and keeps the names; each
+/// conversation listed opens its page there, to read and hear it.
 struct PlacesView: View {
     struct Named: Identifiable {
         let id: Int
@@ -52,6 +54,7 @@ struct PlacesView: View {
     @State private var selected: Named.ID?
     @State private var grab: (id: Named.ID, offset: CGSize)?
     @State private var naming: Unnamed?
+    @State private var removing: Named?
     @State private var visits: [String: [Conversation]] = [:]
     @State private var showing: Visits?
     @State private var camera = MapCameraPosition.automatic
@@ -86,6 +89,15 @@ struct PlacesView: View {
                 Task { await send(fields) }
             }
         }
+        .confirmationDialog("Remove this pin of \(removing?.name ?? "")?",
+                            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+                            titleVisibility: .visible, presenting: removing) { spot in
+            Button("Remove Pin", role: .destructive) { Task { await remove(spot) } }
+        } message: { spot in
+            Text(named.contains { $0.name == spot.name && $0.id != spot.id }
+                 ? "\(spot.name) keeps its other pins."
+                 : "It\u{2019}s \(spot.name)\u{2019}s only pin, so the place is forgotten, and conversations put there are put nowhere.")
+        }
         .alert("Places", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
             Button("OK") {}
         } message: {
@@ -119,7 +131,7 @@ struct PlacesView: View {
                         pin(dragging: grab?.id == spot.id, moved: moved[spot.id] != nil)
                             .gesture(drag(spot, proxy))
                             .accessibilityLabel(spot.name)
-                            .accessibilityHint("Drag to where this place really is, or select to resize it")
+                            .accessibilityHint("Drag to where this place really is, or select to resize or remove it")
                     }
                     .tag(spot.id)
                 }
@@ -168,11 +180,17 @@ struct PlacesView: View {
             Slider(value: position, in: 0...1) { Text("Radius") }
                 .accessibilityValue("\(Int(radius)) metres")
             let count = visits[spot.name]?.count ?? 0
-            Button { showing = Visits(name: spot.name) } label: {
-                Label(count == 0 ? "No Conversations Yet" : "Conversations Here (\(count))", systemImage: "text.bubble")
-                    .font(.subheadline)
+            HStack {
+                Button { showing = Visits(name: spot.name) } label: {
+                    Label(count == 0 ? "No Conversations Yet" : "Conversations Here (\(count))", systemImage: "text.bubble")
+                }
+                .disabled(count == 0)
+                Spacer()
+                // Saving first, so removing one pin doesn't drop another's unsaved changes.
+                Button("Remove Pin", systemImage: "trash", role: .destructive) { removing = spot }
+                    .disabled(busy || !moved.isEmpty || !resized.isEmpty)
             }
-            .disabled(count == 0)
+            .font(.subheadline)
         }
         .padding()
         .background(.regularMaterial, in: .rect(cornerRadius: 16))
@@ -286,6 +304,17 @@ struct PlacesView: View {
         await load()
     }
 
+    /// A place with other pins moves to just those; its only pin forgets it.
+    private func remove(_ spot: Named) async {
+        let others = named.filter { $0.name == spot.name && $0.id != spot.id }
+        var fields = [("action", others.isEmpty ? "forget" : "move"), ("from", spot.name)]
+        for other in others {
+            fields += [("at", String(format: "%.6f,%.6f", other.coordinate.latitude, other.coordinate.longitude)),
+                       ("radius", String(format: "%.0f", other.radius))]
+        }
+        await send(fields)
+    }
+
     private func send(_ fields: [(String, String)]) async {
         if await post(fields) { await load() }
     }
@@ -372,8 +401,9 @@ struct PlacesView: View {
     private static let session = URLSession(configuration: .ephemeral, delegate: NoRedirects(), delegateQueue: nil)
 }
 
-/// What was recorded at a spot, then: name it, give it to a place already
-/// named (another of its spots, offered nearest first), or say it isn't a place.
+/// What was recorded at a spot, then: name it, say it was at a place already
+/// named (offered nearest first) without a pin of its own, or say it isn't a
+/// place. Typing a name already used adds the spot to that place as a pin.
 private struct NameSpot: View {
     let spot: PlacesView.Unnamed
     let names: [String]
@@ -389,20 +419,26 @@ private struct NameSpot: View {
                     TextField("Name", text: $name)
                         .submitLabel(.done)
                         .onSubmit(save)
-                    if !names.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(names, id: \.self) { existing in
-                                    Button(existing) { name = existing }
-                                        .buttonStyle(.bordered)
-                                        .controlSize(.small)
+                } footer: {
+                    Text("\(spot.minutes) minutes here. A name already used adds a pin to that place. The portal's Places page has clips heard here.")
+                }
+                if !names.isEmpty {
+                    Section {
+                        ForEach(names.prefix(Self.nearest), id: \.self) { place in
+                            Button(place, systemImage: "mappin.and.ellipse") { assign(place) }
+                        }
+                        if names.count > Self.nearest {
+                            Menu("Another Place", systemImage: "ellipsis.circle") {
+                                ForEach(names.dropFirst(Self.nearest), id: \.self) { place in
+                                    Button(place) { assign(place) }
                                 }
                             }
                         }
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    } header: {
+                        Text("Was At")
+                    } footer: {
+                        Text("Puts the time here at that place, without another pin.")
                     }
-                } footer: {
-                    Text("\(spot.minutes) minutes here. Reusing a name adds this spot to that place. The portal's Places page has clips heard here.")
                 }
                 Section {
                     if spot.conversations.isEmpty {
@@ -439,6 +475,13 @@ private struct NameSpot: View {
     }
 
     private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// The places named nearest the spot that are offered first.
+    private static let nearest = 3
+
+    private func assign(_ place: String) {
+        send([("action", "assign"), ("name", place), ("latitude", "\(spot.latitude)"), ("longitude", "\(spot.longitude)")])
+    }
 
     private func open(_ conversation: PlacesView.Conversation) {
         opened = conversation

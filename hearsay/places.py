@@ -17,7 +17,9 @@ labels/places.jsonl, one record per line:
         spot, radius in metres (RADIUS if absent); naming a second spot with
         the same name makes both that place (a big venue)
     {"type": "rename", "from", "to"}  renaming onto an existing name merges them
-    {"type": "forget", "name"}  every spot with that name
+    {"type": "forget", "name"}  every spot with that name. Followed by a
+        place of that name, it's a move: the spots that follow replace them,
+        and the place's corrections stand
     {"type": "ignore", "latitude", "longitude"}  not a place: readings near it
         are no longer offered for naming (a road, a friend's street). Never
         reaches the stream, which only names named places.
@@ -28,7 +30,8 @@ labels/places.jsonl, one record per line:
     {"type": "at", "start", "end", "name"}  the owner was at that place from
         start to end: the readings in that span say so, wherever they say (a
         fix that wandered), and it holds from start even before a reading
-        does; later wins
+        does; later wins. A spot outside a place's area is put at it with one
+        of these per stretch of its readings (spot_spans), not a new spot
 
 Fixes iOS was less sure of than MAX_ACCURACY are left out too.
 """
@@ -105,16 +108,17 @@ def read_ignored(labels_dir: Path) -> list[tuple[float, float]]:
 def read_corrections(labels_dir: Path) -> list[tuple[float, float, str | None]]:
     """(start, end, place) for each span of readings the operator corrected,
     in order: None where they were wrong, a name where they were at it.
-    Renames carry over; a forgotten place's spans become wrong ones."""
+    Renames carry over; a forgotten place's spans become wrong ones, but a
+    moved one's stand."""
     path = labels_dir / "places.jsonl"
+    records = [json.loads(line) for line in (path.read_text().splitlines() if path.exists() else [])]
     found = []
-    for line in (path.read_text().splitlines() if path.exists() else []):
-        record = json.loads(line)
+    for record, after in zip(records, records[1:] + [None]):
         if record["type"] in ("drop", "at"):
             found.append((record["start"], record["end"], record.get("name")))
         elif record["type"] == "rename":
             found = [(a, b, record["to"] if n == record["from"] else n) for a, b, n in found]
-        elif record["type"] == "forget":
+        elif record["type"] == "forget" and not (after and after["type"] == "place" and after["name"] == record["name"]):
             found = [(a, b, None if n == record["name"] else n) for a, b, n in found]
     return found
 
@@ -211,3 +215,19 @@ def unnamed_spots(readings: list[tuple[float, float, float]], spots: list[tuple[
             found.append({"latitude": lat, "longitude": lon, "times": [at]})
     found = [s for s in found if len(s["times"]) >= MIN_SPOT_READINGS]
     return sorted(found, key=lambda s: -len(s["times"]))
+
+
+def spot_spans(times: list[float], spot_times: list[float]) -> list[tuple[float, float]]:
+    """The stretches of an unnamed spot's readings: (first, last) of each run
+    of them among all the readings' times, in order, so a span put at a
+    place takes in no reading from anywhere else."""
+    spot = set(spot_times)
+    spans = []
+    run = None
+    for at in times:
+        if at in spot:
+            run = (run[0], at) if run else (at, at)
+        elif run:
+            spans.append(run)
+            run = None
+    return spans + [run] if run else spans
