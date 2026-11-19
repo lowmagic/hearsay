@@ -74,17 +74,14 @@ Where Hearsay doesn't follow the org standards yet. These are debt to pay down, 
   revision. CI (`.github/workflows/test.yml:13-15`) and `install/gpu.sh:34` take Python `3.12`, not an exact release
   (in `gpu.sh` also shell.md's pinned-tool rule), and nothing sets `[tool.uv] required-version`, so CI's setup-uv
   takes the latest uv.
-- Versions and pins: the annotated tag `v1` isn't a `vX.Y.Z` tag, so it isn't a release (its commit's manifest said
-  `0.1.0`). The manifest's version is `0.0.0`, and no CI job would fail a `vX.Y.Z` tag that doesn't match it:
-  `test.yml` runs only on pushes to main and on pull requests.
+- Versions and pins: the annotated tag `v1` isn't a `vX.Y.Z` tag, so it isn't a release.
 - Structure: `STORED_AUDIO` in `hearsay/capture.py` is never read.
 - Privacy: the places tests use coordinates in a real city, one of them named `HOME` (`tests/test_places.py:19-20`,
   `tests/test_portal.py:104-135`), not made-up values.
 - Privacy: the [roadmap](roadmap.md) names four people from real conversations (`:210-211`) and cites real
   conversation ids with what happened in them (`:212`, `:229`, `:577`, `:594-597`; also `hearsay/music.py:4`).
 - Docs: there's no `docs/SPEC.md`, so what Hearsay is meant to do is spread across [AGENTS.md](../AGENTS.md) and the
-  [roadmap](roadmap.md)'s slices, which name no spec requirements. The roadmap is `roadmap.md`, not `ROADMAP.md`,
-  and its slices have no `Status:` or `Delivers:` line.
+  [roadmap](roadmap.md)'s slices, which name no spec requirements. The roadmap is `roadmap.md`, not `ROADMAP.md`.
 - Deployment repos: the deployment's layout is in this repo: `/mnt/fast/...` paths, the `fast/hearsay` and
   `fast/repos` datasets and `ssh nas`, in `install/`, in `hearsay/label.py:38-43` and `hearsay/transcribe.py:45-50`,
   and in [install.md](install.md), [stream.md](stream.md) and the [roadmap](roadmap.md). These facts belong in a
