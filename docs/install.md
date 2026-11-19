@@ -43,7 +43,7 @@ running, and `nas.sh` that the server has held jobs.
    keys of its own, without a passphrase, each named for what it opens:
    `~/.ssh/nas`, added to the NAS user's authorized keys, and
    `~/.ssh/hearsay_deploy`, added to this repo under Settings > Deploy keys
-   with write access left off, since the repo is private. Keeping them apart
+   with write access left off. Keeping them apart
    means either can be replaced without breaking the other. As `corral`:
    ```sh
    sudo -iu corral
