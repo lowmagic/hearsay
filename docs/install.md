@@ -52,7 +52,7 @@ running, and `nas.sh` that the server has held jobs.
    cat >> ~/.ssh/config <<'EOF'
    Host nas
        HostName <the NAS's address>
-       User admin
+       User corral
        IdentityFile ~/.ssh/nas
        IdentitiesOnly yes
    EOF
@@ -93,28 +93,28 @@ free Apple ID the phone's install expires after 7 days; re-running
 
 ## Data
 
-Uploads land in `/mnt/fast/hearsay/raw/capture/<date>/`; Omi's webhook
-payloads (until 2026-09-30) stay in `raw/{transcript,audio,memory}/` and are
+Uploads land in `/mnt/fast/hearsay/ephemeral/raw/capture/<date>/`; Omi's webhook
+payloads (until 2026-09-30) stay in `ephemeral/raw/{transcript,audio,memory}/` and are
 still parsed:
 
 - `.body` holds the request body, byte for byte.
 - `.json` is the sidecar: timestamp, query params, headers without the
   token, size, and sha256.
 
-Each directory under `/mnt/fast/hearsay/` is a dataset of its own, backed up
-by what it holds ([`install/nas.sh`](../install/nas.sh) sets this up):
+Data under `/mnt/fast/hearsay/` is split into two datasets by backup policy
+([`install/nas.sh`](../install/nas.sh) sets this up):
 
-- Audio, and what's made from it alone: `raw`, `imports`, `audio`
-  (conversation WAVs), `pcm` (decoded audio, a cache) and `transcripts`
+- `fast/hearsay/ephemeral` — audio, and what's made from it alone: `raw`, `imports`,
+  `audio` (conversation WAVs), `pcm` (decoded audio, a cache) and `transcripts`
   (the dev box's, which records hold once sealed). Daily snapshots at 04:00
   kept 7 days, replicated to `storage/hearsay-audio-replica` and kept there
   as long. Input audio isn't precious: what it gave is kept in records, and
   the audio itself goes at retention, so its backups don't keep it long
   after.
-- What's kept: `records`, `db`, `labels`, `stream` and `config`. The
+- `fast/hearsay` — what's kept: `records`, `db`, `labels`, `stream` and `config`. The
   NAS-wide backups: `fast` snapshotted daily and kept 2 weeks, replicated to
   `storage/fast-replica` and kept 2 months. These aren't Hearsay's; `nas.sh`
-  only adds the audio datasets to their excludes.
+  only adds `fast/hearsay/ephemeral` to their excludes.
 
 The TrueNAS UI shows both under Data Protection.
 
@@ -294,21 +294,23 @@ sudo flock /run/hearsay-reprocess.lock docker compose -f /mnt/fast/repos/hearsay
   every payload parses; otherwise the failures are listed and the old database
   and audio are left in place. Deleting it is safe: the next run builds it
   again from raw and the records.
-- `/mnt/fast/hearsay/audio/<conversation_id>.wav`: each conversation's audio,
+- `/mnt/fast/hearsay/ephemeral/audio/<conversation_id>.wav`: each conversation's audio,
   aligned so that segment times are offsets into the file. Missing audio is
   silence; the `conversation_audio` table records how each file was aligned
   and what fraction of it is real audio. A WAV is rewritten only when its
   audio changes, and the new one is moved in (from `audio/.staged/`) only
   once the database describing it is in place, so a failed run leaves the
   old audio too.
-- `/mnt/fast/hearsay/pcm/`: uploads and imports decoded to PCM, cached so
+- `/mnt/fast/hearsay/ephemeral/pcm/`: uploads and imports decoded to PCM, cached so
   each is decoded once, and only while its conversation isn't sealed.
   Deleting it is safe: the next run decodes them again.
 
 - Speaker embeddings and owner / not-owner labels per segment, in the
   `segment_speakers` table.
 
-Members of the `apps` group can read the outputs.
+Members of the `hearsay` group can read the database and audio (and write
+labels, imports, and transcripts); members of `hearsay-stream` can read only
+the text stream.
 
 ## Owner voice (dev box, then NAS)
 
@@ -342,7 +344,7 @@ as a command with
 
 ## Reading the utterance stream (consumers)
 
-`/mnt/fast/hearsay/stream/` (readable by the `apps` group) holds Hearsay's
+`/mnt/fast/hearsay/stream/` (readable by the `hearsay-stream` group) holds Hearsay's
 output, rewritten after every reprocess: `index.json`, one file per
 conversation under `conversations/`, and `forgotten.json`. No audio is ever in
 it. What every field means, when it changes and what a consumer can rely on
@@ -358,7 +360,7 @@ recording's start time, in your local time:
 hearsay-label import ~/Downloads/omi_export.mp3 "2026-09-28 19:42"
 ```
 
-It is copied unchanged to `/mnt/fast/hearsay/imports/` over `ssh nas` and
+It is copied unchanged to `/mnt/fast/hearsay/ephemeral/imports/` over `ssh nas` and
 placed on the timeline at that time on the next reprocess; where it overlaps
 live audio, the live audio wins. Importing the same file twice does nothing.
 A recording that began more than 60 days ago is refused: Hearsay keeps no

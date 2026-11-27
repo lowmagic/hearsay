@@ -46,8 +46,8 @@ from hearsay.words import boosted
 
 NAS = "nas"
 DB = "/mnt/fast/hearsay/db/hearsay.sqlite"
-AUDIO_DIR = "/mnt/fast/hearsay/audio"
-TRANSCRIPTS_DIR = "/mnt/fast/hearsay/transcripts"
+AUDIO_DIR = "/mnt/fast/hearsay/ephemeral/audio"
+TRANSCRIPTS_DIR = "/mnt/fast/hearsay/ephemeral/transcripts"
 FAILED_DIR = f"{TRANSCRIPTS_DIR}/failed"
 WORDS = "/mnt/fast/hearsay/labels/words.json"
 DEVICE = "cuda"
