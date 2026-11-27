@@ -44,10 +44,10 @@ from hearsay.turns import wall
 
 NAS = "nas"
 DB = "/mnt/fast/hearsay/db/hearsay.sqlite"
-AUDIO_DIR = "/mnt/fast/hearsay/audio"
+AUDIO_DIR = "/mnt/fast/hearsay/ephemeral/audio"
 LABELS = "/mnt/fast/hearsay/labels/labels.jsonl"
 ENROLLMENT = "/mnt/fast/hearsay/labels/enrollment.json"
-IMPORTS = "/mnt/fast/hearsay/imports"
+IMPORTS = "/mnt/fast/hearsay/ephemeral/imports"
 ANSWERS = {"m": "owner", "n": "not_owner", "u": "unsure"}
 # Song or talk, per turn; on reprocess the answer wins over hearsay/music.py's rule.
 MUSIC_LABELS = "/mnt/fast/hearsay/labels/music.jsonl"

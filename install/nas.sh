@@ -9,7 +9,7 @@ source "$(dirname "$0")/lib.sh"
 
 require_root
 COMPOSE=(docker compose -f "$REPO_DIR/install/compose.yaml")
-CHILDREN=(config raw db audio labels transcripts imports stream records pcm)
+EPHEMERAL_DATASET="$NAS_POOL_DATASET/ephemeral"
 
 say "Checking Docker"
 if ! docker info >/dev/null 2>&1; then
@@ -24,14 +24,12 @@ say "Checking the repo is at $NAS_REPO_DIR"
 then: sudo $NAS_REPO_DIR/install/nas.sh"
 echo "ok"
 
-say "Datasets under $NAS_POOL_DATASET"
+say "Datasets ($NAS_POOL_DATASET and $EPHEMERAL_DATASET)"
 # midclt (not raw zfs) so the TrueNAS UI knows about the ones made here.
-if ! zfs list -H -o name "$NAS_POOL_DATASET" >/dev/null 2>&1; then
-    midclt call pool.dataset.create "{\"name\": \"$NAS_POOL_DATASET\"}" >/dev/null
-    echo "created: $NAS_POOL_DATASET"
-fi
-for ds in "${CHILDREN[@]}"; do
-    dataset="$NAS_POOL_DATASET/$ds"
+# Two datasets match the two backup policies: fast/hearsay (kept, NAS-wide
+# snapshots) and fast/hearsay/ephemeral (7-day audio snapshots, excluded from
+# NAS-wide tasks).
+for dataset in "$NAS_POOL_DATASET" "$EPHEMERAL_DATASET"; do
     if zfs list -H -o name "$dataset" >/dev/null 2>&1; then
         echo "exists: $dataset"
     else
@@ -39,56 +37,51 @@ for ds in "${CHILDREN[@]}"; do
         echo "created: $dataset"
     fi
 done
-for ds in "${CHILDREN[@]}"; do
-    [ -d "$NAS_ROOT/$ds" ] || die "$NAS_POOL_DATASET/$ds isn't mounted at $NAS_ROOT/$ds"
-done
+[ -d "$NAS_ROOT" ] || die "$NAS_POOL_DATASET isn't mounted at $NAS_ROOT"
+[ -d "$NAS_EPHEMERAL" ] || die "$EPHEMERAL_DATASET isn't mounted at $NAS_EPHEMERAL"
 
-# Each dataset below guards itself; members of the apps group (the dev box's
-# ssh login, consumers) need to get through this one.
-chown root:root "$NAS_ROOT"
-chmod 755 "$NAS_ROOT"
+mkdir -p "$NAS_CONFIG" "$NAS_RECORDS" "$NAS_DB" "$NAS_LABELS" "$NAS_STREAM" \
+    "$NAS_RAW" "$NAS_AUDIO" "$NAS_IMPORTS" "$NAS_PCM" "$NAS_TRANSCRIPTS/failed"
+
+# Each directory below guards itself; members of hearsay / hearsay-stream need
+# to traverse the two dataset roots.
+chown root:root "$NAS_ROOT" "$NAS_EPHEMERAL"
+chmod 755 "$NAS_ROOT" "$NAS_EPHEMERAL"
 chown root:root "$NAS_CONFIG"
 chmod 700 "$NAS_CONFIG"
-chown "$APPS_UID:$APPS_GID" "$NAS_RAW"
-chmod 750 "$NAS_RAW"
-# What sealed conversations' audio produced (hearsay/records.py): raw's
-# stand-in once their audio is gone, so guarded like it.
-chown "$APPS_UID:$APPS_GID" "$NAS_RECORDS"
-chmod 750 "$NAS_RECORDS"
-# Parsed transcripts, assembled and decoded audio and the utterance stream:
-# same sensitivity as raw. The apps group (consumers included) can read them.
-for dir in "$NAS_DB" "$NAS_AUDIO" "$NAS_STREAM" "$NAS_PCM"; do
-    chown "$APPS_UID:$APPS_GID" "$dir"
+# Only the hearsay containers read raw uploads and sealed records; neither
+# corral nor hearsay-label needs access to them.
+chown "$HEARSAY_UID:$HEARSAY_GID" "$NAS_RAW" "$NAS_RECORDS"
+chmod 700 "$NAS_RAW" "$NAS_RECORDS"
+# Database, assembled audio, and decoded PCM cache: readable by the hearsay
+# group (corral for transcription, admin for hearsay-label).
+for dir in "$NAS_DB" "$NAS_AUDIO" "$NAS_PCM"; do
+    chown "$HEARSAY_UID:$HEARSAY_GID" "$dir"
     chmod 750 "$dir"
 done
-# Written over ssh by members of the apps group: operator input (enrollment
+# Text-only utterance stream: readable by the hearsay-stream group (consumers
+# such as Idea Machine), never audio.
+chown "$HEARSAY_UID:$HEARSAY_STREAM_GID" "$NAS_STREAM"
+chmod 750 "$NAS_STREAM"
+# Written over ssh by members of the hearsay group: operator input (enrollment
 # windows, labels, imported audio) and transcripts (install/gpu.sh).
-# setgid keeps new files in the apps group, which the containers run as.
-for dir in "$NAS_LABELS" "$NAS_TRANSCRIPTS" "$NAS_IMPORTS"; do
-    chown "$APPS_UID:$APPS_GID" "$dir"
+# setgid keeps new files in the hearsay group, which the containers run as.
+for dir in "$NAS_LABELS" "$NAS_TRANSCRIPTS" "$NAS_TRANSCRIPTS/failed" "$NAS_IMPORTS"; do
+    chown "$HEARSAY_UID:$HEARSAY_GID" "$dir"
     chmod 2770 "$dir"
 done
-# The dev box leaves failure markers here, and reprocess deletes them. Made
-# here, not by the dev box's ssh login (umask 022), so the containers can
-# write in it.
-mkdir -p "$NAS_TRANSCRIPTS/failed"
-chown "$APPS_UID:$APPS_GID" "$NAS_TRANSCRIPTS/failed"
-chmod 2770 "$NAS_TRANSCRIPTS/failed"
 
-say "Backups of the audio datasets"
+say "Backups of the ephemeral audio dataset"
 # Input audio isn't precious: what it gave is kept in records
 # (hearsay/records.py), which also hold the dev box's transcripts once sealed,
-# and the audio goes at retention. So these datasets have their own daily
-# snapshots kept 7 days, replicated to the storage pool and kept there as
-# long, and are left out of the NAS-wide tasks (snapshots of fast kept 2
-# weeks, replicated to storage for 2 months), which keep records, the
-# database, labels and the stream.
-# The NAS-wide tasks aren't Hearsay's: it only adds its excludes to them.
+# and the audio goes at retention. So fast/hearsay/ephemeral has its own daily
+# snapshot kept 7 days, replicated to the storage pool and kept there as long,
+# and is left out of the NAS-wide tasks (snapshots of fast kept 2 weeks,
+# replicated to storage for 2 months), which keep records, the database, labels
+# and the stream.
+# The NAS-wide tasks aren't Hearsay's: it only adds its exclude to them.
 # Through midclt, so it all shows in the TrueNAS UI.
-AUDIO_DATASETS=""
-for ds in raw audio imports pcm transcripts; do
-    AUDIO_DATASETS+="$NAS_POOL_DATASET/$ds "
-done
+AUDIO_DATASETS="$EPHEMERAL_DATASET"
 AUDIO_REPLICA="storage/hearsay-audio-replica"
 export AUDIO_DATASETS AUDIO_REPLICA
 # Each call takes a command: tasks, exclude, run, verify.
@@ -164,7 +157,8 @@ def below(parent, dataset):
 def target(replication, dataset):
     """Where a replication task puts a source dataset, as zettarepl works it out."""
     base = os.path.commonpath(replication["source_datasets"])
-    return os.path.join(replication["target_dataset"], os.path.relpath(dataset, base))
+    rel = os.path.relpath(dataset, base)
+    return replication["target_dataset"] if rel == "." else os.path.join(replication["target_dataset"], rel)
 
 
 def wide_snapshot_tasks():

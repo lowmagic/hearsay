@@ -2,20 +2,23 @@
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# NAS layout (TrueNAS SCALE, NVMe pool "fast").
+# NAS layout (TrueNAS SCALE, NVMe pool "fast"). Two datasets: fast/hearsay (kept,
+# backed up by the NAS-wide fast tasks) and fast/hearsay/ephemeral (7-day audio
+# snapshot/replica, excluded from the NAS-wide tasks).
 NAS_POOL_DATASET="fast/hearsay"
 NAS_ROOT="/mnt/fast/hearsay"
+NAS_EPHEMERAL="$NAS_ROOT/ephemeral"
 NAS_REPO_DIR="/mnt/fast/repos/hearsay"
 NAS_CONFIG="$NAS_ROOT/config"
-NAS_RAW="$NAS_ROOT/raw"
+NAS_RAW="$NAS_EPHEMERAL/raw"
 NAS_DB="$NAS_ROOT/db"
-NAS_AUDIO="$NAS_ROOT/audio"
+NAS_AUDIO="$NAS_EPHEMERAL/audio"
 NAS_LABELS="$NAS_ROOT/labels"
-NAS_TRANSCRIPTS="$NAS_ROOT/transcripts"
-NAS_IMPORTS="$NAS_ROOT/imports"
+NAS_TRANSCRIPTS="$NAS_EPHEMERAL/transcripts"
+NAS_IMPORTS="$NAS_EPHEMERAL/imports"
 NAS_STREAM="$NAS_ROOT/stream"
 NAS_RECORDS="$NAS_ROOT/records"
-NAS_PCM="$NAS_ROOT/pcm"
+NAS_PCM="$NAS_EPHEMERAL/pcm"
 NAS_PORTAL_ENV="$NAS_CONFIG/portal.env"
 NAS_CAPTURE_ENV="$NAS_CONFIG/capture.env"
 NAS_CORRAL_ENV="$NAS_CONFIG/corral.env"
@@ -25,8 +28,10 @@ NAS_CORRAL_DIR="/mnt/fast/corral-worker"
 NAS_CORRAL_PORT=8700
 NAS_PORTAL_PORT=8788
 NAS_CAPTURE_PORT=8789
-APPS_UID=568
-APPS_GID=568
+# Dedicated NAS user/groups managed by infra (ADR-025).
+HEARSAY_UID=3101
+HEARSAY_GID=3101
+HEARSAY_STREAM_GID=3102
 
 say() { printf '\n==> %s\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
